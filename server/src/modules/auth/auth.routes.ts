@@ -161,6 +161,23 @@ authRouter.get('/me', authenticate, async (req, res) => {
   res.json({ user: await publicUser(user) });
 });
 
+// Session probe for app start: answers 200 with `user: null` when signed out, so a visitor's first page load does not
+// produce a failed request. Endpoints that need a session keep answering 401.
+authRouter.get('/session', (req, res, next) => {
+  authenticate(req, res, async (err?: unknown) => {
+    try {
+      if (err) {
+        if (err instanceof AppError && err.status === 401) return res.json({ user: null });
+        return next(err);
+      }
+      const user = await prisma.user.findUniqueOrThrow({ where: { id: requireAuth(req).userId } });
+      res.json({ user: await publicUser(user) });
+    } catch (e) {
+      next(e);
+    }
+  });
+});
+
 authRouter.post('/forgot-password', authLimiter, async (req, res) => {
   const { email } = forgotSchema.parse(req.body);
   const user = await prisma.user.findUnique({ where: { email } });

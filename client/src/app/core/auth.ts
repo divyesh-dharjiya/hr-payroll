@@ -11,6 +11,8 @@ export class Auth {
 
   private readonly state = signal<SessionUser | null>(null);
   private loaded = false;
+  // Guards run in parallel on the first navigation; they share one session request.
+  private pending: Promise<SessionUser | null> | null = null;
 
   readonly user = this.state.asReadonly();
   readonly isSignedIn = computed(() => this.state() !== null);
@@ -22,8 +24,20 @@ export class Auth {
   /** Loads the session once per app start. Resolves to the user or null when signed out. */
   async load(force = false): Promise<SessionUser | null> {
     if (this.loaded && !force) return this.state();
+    if (this.pending && !force) return this.pending;
+    const request = this.fetchSession();
+    this.pending = request;
     try {
-      const { user } = await this.api.get<{ user: SessionUser }>('/auth/me');
+      return await request;
+    } finally {
+      if (this.pending === request) this.pending = null;
+    }
+  }
+
+  private async fetchSession(): Promise<SessionUser | null> {
+    try {
+      // `/auth/session` answers 200 with `user: null` when signed out, so visitors see no failed request.
+      const { user } = await this.api.get<{ user: SessionUser | null }>('/auth/session');
       this.state.set(user);
     } catch (err) {
       this.state.set(null);

@@ -157,6 +157,22 @@ export function summarizeDay(punches: PunchSession[], workDate: string, rules: A
   };
 }
 
+/**
+ * A stored HALF_DAY is final only once the day's shift has ended. Before that (someone out for lunch, or between
+ * sessions) the day is still in progress, so it reads as PRESENT or LATE.
+ */
+export function effectiveDayStatus<S extends string>(
+  status: S,
+  workDate: string,
+  lateMinutes: number,
+  rules: AttendanceRules,
+  now: Date = new Date(),
+): S | 'PRESENT' | 'LATE' {
+  if (status !== 'HALF_DAY') return status;
+  if (now.getTime() >= shiftWindow(workDate, rules).end.getTime()) return status;
+  return lateMinutes > 0 ? 'LATE' : 'PRESENT';
+}
+
 /** Attendance status priority used for monthly summaries. */
 export function summarizeStatuses(statuses: string[]) {
   const count = (s: string) => statuses.filter((x) => x === s).length;

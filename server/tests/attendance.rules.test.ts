@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateCheckIn, evaluateCheckOut, shiftWindow, summarizeDay, type AttendanceRules } from '../src/modules/attendance/attendance.rules';
+import { effectiveDayStatus, evaluateCheckIn, evaluateCheckOut, shiftWindow, summarizeDay, type AttendanceRules } from '../src/modules/attendance/attendance.rules';
 import { zonedTimeToUtc } from '../src/lib/time';
 
 const rules: AttendanceRules = {
@@ -144,5 +144,20 @@ describe('multiple punches per day', () => {
     );
     expect(s.workedMinutes).toBe(570);
     expect(s.overtimeMinutes).toBe(90);
+  });
+});
+
+describe('effective day status', () => {
+  it('does not show a half day while the shift is still running (for example, out for lunch)', () => {
+    expect(effectiveDayStatus('HALF_DAY', DAY, 0, rules, ist('13:30'))).toBe('PRESENT');
+    expect(effectiveDayStatus('HALF_DAY', DAY, 25, rules, ist('13:30'))).toBe('LATE');
+  });
+
+  it('keeps the half day once the shift has ended', () => {
+    expect(effectiveDayStatus('HALF_DAY', DAY, 0, rules, ist('18:30'))).toBe('HALF_DAY');
+  });
+
+  it('leaves other statuses unchanged', () => {
+    expect(effectiveDayStatus('WFH', DAY, 0, rules, ist('10:00'))).toBe('WFH');
   });
 });

@@ -6,7 +6,7 @@ import { writeAudit } from '../../lib/audit';
 import type { AuthContext } from '../../middleware/auth';
 import { employeeScope } from '../employees/employees.service';
 import { dateOnly, eachDay, minutesBetween, todayIn, weekdayOf, ymdOf } from '../../lib/time';
-import { shiftWindow, summarizeDay, type AttendanceRules } from './attendance.rules';
+import { effectiveDayStatus, shiftWindow, summarizeDay, type AttendanceRules } from './attendance.rules';
 import { hrUserIds, managerUserIdFor, notifyUsers, userIdForEmployee } from '../../lib/notify';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -33,20 +33,23 @@ function requireEmployeeProfile(auth: AuthContext): string {
   return auth.employeeId;
 }
 
-const recordView = (r: {
-  id: string;
-  workDate: Date;
-  status: AttendanceStatus;
-  checkInAt: Date | null;
-  checkOutAt: Date | null;
-  breakMinutes: number;
-  workedMinutes: number;
-  lateMinutes: number;
-  overtimeMinutes: number;
-}) => ({
+const recordView = (
+  r: {
+    id: string;
+    workDate: Date;
+    status: AttendanceStatus;
+    checkInAt: Date | null;
+    checkOutAt: Date | null;
+    breakMinutes: number;
+    workedMinutes: number;
+    lateMinutes: number;
+    overtimeMinutes: number;
+  },
+  rules: AttendanceRules,
+) => ({
   id: r.id,
   workDate: ymdOf(r.workDate),
-  status: r.status,
+  status: effectiveDayStatus(r.status, ymdOf(r.workDate), r.lateMinutes, rules),
   checkInAt: r.checkInAt?.toISOString() ?? null,
   checkOutAt: r.checkOutAt?.toISOString() ?? null,
   breakMinutes: r.breakMinutes,
@@ -161,7 +164,7 @@ export async function getToday(auth: AuthContext) {
       firstInAt: summary.firstInAt?.toISOString() ?? null,
       lastOutAt: summary.lastOutAt?.toISOString() ?? null,
     },
-    record: record ? recordView(record) : null,
+    record: record ? recordView(record, rules) : null,
     serverTime: now.toISOString(),
   };
 }
@@ -294,7 +297,7 @@ export async function dailyStatusesFor(
     if (record) {
       return {
         date,
-        status: record.status,
+        status: effectiveDayStatus(record.status, date, record.lateMinutes, rules),
         workedMinutes: record.workedMinutes,
         lateMinutes: record.lateMinutes,
         overtimeMinutes: record.overtimeMinutes,
@@ -510,6 +513,7 @@ export async function reviewCorrection(
 // Records list (scoped) and monthly summary
 // ---------------------------------------------------------------------------------------------------------------
 export async function listRecords(auth: AuthContext, from: string, to: string, employeeId?: string) {
+  const rules = await loadRules(auth.organizationId);
   const rows = await prisma.attendanceRecord.findMany({
     where: {
       workDate: { gte: dateOnly(from), lte: dateOnly(to) },
@@ -521,7 +525,7 @@ export async function listRecords(auth: AuthContext, from: string, to: string, e
     include: { employee: { select: { firstName: true, lastName: true, employeeCode: true } } },
   });
   return rows.map((r) => ({
-    ...recordView(r),
+    ...recordView(r, rules),
     employee: { name: `${r.employee.firstName} ${r.employee.lastName}`, employeeCode: r.employee.employeeCode },
   }));
 }
