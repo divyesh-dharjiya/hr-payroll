@@ -157,6 +157,32 @@ export function summarizeDay(punches: PunchSession[], workDate: string, rules: A
   };
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Overtime approval
+//  - Overtime is claimed for approval only when a finished day has at least OVERTIME_MIN_CLAIM_MINUTES of it;
+//    a few minutes past shift end are not a claim.
+//  - A manager (direct reports) or HR approves all or part of it, or rejects it. Payroll pays approved minutes only,
+//    at the organization's overtime multiplier.
+//  - When a day is recalculated (a correction, a late punch-out) and its overtime changes, an earlier decision no
+//    longer matches the hours, so the claim goes back to PENDING.
+// ---------------------------------------------------------------------------------------------------------------
+export const OVERTIME_MIN_CLAIM_MINUTES = 30;
+
+export type OvertimeStatus = 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface OvertimeState {
+  status: OvertimeStatus;
+  approvedMinutes: number;
+}
+
+export function overtimeAfterRecalc(previous: OvertimeState & { overtimeMinutes: number }, overtimeMinutes: number): OvertimeState {
+  if (overtimeMinutes < OVERTIME_MIN_CLAIM_MINUTES) return { status: 'NONE', approvedMinutes: 0 };
+  if (previous.status !== 'NONE' && previous.overtimeMinutes === overtimeMinutes) {
+    return { status: previous.status, approvedMinutes: previous.approvedMinutes };
+  }
+  return { status: 'PENDING', approvedMinutes: 0 };
+}
+
 /**
  * Checks the times in a correction request: each must fall on the work date (in the organization timezone; a
  * check-out may fall on the next day for an overnight shift) and neither may be in the future.

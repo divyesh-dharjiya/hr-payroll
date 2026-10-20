@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { correctionTimeErrors, effectiveDayStatus, evaluateCheckIn, evaluateCheckOut, shiftWindow, summarizeDay, type AttendanceRules } from '../src/modules/attendance/attendance.rules';
+import { correctionTimeErrors, effectiveDayStatus, overtimeAfterRecalc, OVERTIME_MIN_CLAIM_MINUTES, evaluateCheckIn, evaluateCheckOut, shiftWindow, summarizeDay, type AttendanceRules } from '../src/modules/attendance/attendance.rules';
 import { zonedTimeToUtc } from '../src/lib/time';
 
 const rules: AttendanceRules = {
@@ -182,5 +182,25 @@ describe('correction times', () => {
     const night = { ...rules, shiftStart: '22:00', shiftEnd: '06:00' };
     const out = zonedTimeToUtc('2026-10-20', '06:05', 'Asia/Kolkata');
     expect(correctionTimeErrors(DAY, ist('22:00'), out, night, new Date(out.getTime() + 3_600_000))).toEqual([]);
+  });
+});
+
+describe('overtime approval state', () => {
+  const none = { status: 'NONE' as const, approvedMinutes: 0, overtimeMinutes: 0 };
+
+  it('claims overtime for approval only from the minimum upward', () => {
+    expect(overtimeAfterRecalc(none, OVERTIME_MIN_CLAIM_MINUTES - 1)).toEqual({ status: 'NONE', approvedMinutes: 0 });
+    expect(overtimeAfterRecalc(none, OVERTIME_MIN_CLAIM_MINUTES)).toEqual({ status: 'PENDING', approvedMinutes: 0 });
+  });
+
+  it('keeps a decision while the overtime is unchanged', () => {
+    const approved = { status: 'APPROVED' as const, approvedMinutes: 45, overtimeMinutes: 60 };
+    expect(overtimeAfterRecalc(approved, 60)).toEqual({ status: 'APPROVED', approvedMinutes: 45 });
+  });
+
+  it('asks for a new decision when a recalculation changes the overtime', () => {
+    const approved = { status: 'APPROVED' as const, approvedMinutes: 60, overtimeMinutes: 60 };
+    expect(overtimeAfterRecalc(approved, 90)).toEqual({ status: 'PENDING', approvedMinutes: 0 });
+    expect(overtimeAfterRecalc(approved, 10)).toEqual({ status: 'NONE', approvedMinutes: 0 });
   });
 });

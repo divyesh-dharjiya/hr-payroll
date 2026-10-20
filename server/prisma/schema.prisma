@@ -50,6 +50,24 @@ enum AttendanceStatus {
   WFH
 }
 
+// Overtime is paid only after a manager or HR approves it (see attendance.rules.ts: overtimeClaim).
+enum OvertimeStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DocumentCategory {
+  ID_PROOF
+  ADDRESS_PROOF
+  EDUCATION
+  EMPLOYMENT
+  CONTRACT
+  TAX
+  OTHER
+}
+
 enum CorrectionStatus {
   PENDING
   APPROVED
@@ -87,40 +105,40 @@ enum AdjustmentKind {
 }
 
 model Organization {
-  id                   String   @id @default(cuid())
-  name                 String
-  legalName            String?
-  logoUrl              String?
-  timezone             String   @default("Asia/Kolkata")
-  currency             String   @default("INR")
+  id                         String   @id @default(cuid())
+  name                       String
+  legalName                  String?
+  logoUrl                    String?
+  timezone                   String   @default("Asia/Kolkata")
+  currency                   String   @default("INR")
   // 0 = Sunday ... 6 = Saturday
-  weeklyOffDays        Int[]    @default([0])
-  financialYearStartMonth Int   @default(4)
-  shiftStart           String   @default("09:30") // HH:mm in organization timezone
-  shiftEnd             String   @default("18:30")
-  graceMinutes         Int      @default(10)
-  standardBreakMinutes Int      @default(60)
-  breakDeductionAfterMinutes Int @default(360)
+  weeklyOffDays              Int[]    @default([0])
+  financialYearStartMonth    Int      @default(4)
+  shiftStart                 String   @default("09:30") // HH:mm in organization timezone
+  shiftEnd                   String   @default("18:30")
+  graceMinutes               Int      @default(10)
+  standardBreakMinutes       Int      @default(60)
+  breakDeductionAfterMinutes Int      @default(360)
   // Payroll rule configuration (rates are stored as basis points: 1200 = 12.00%)
-  pfEmployeeRateBps    Int      @default(1200)
-  pfEmployerRateBps    Int      @default(1200)
-  pfWageCeilingPaise   Int      @default(1500000)
-  esiEmployeeRateBps   Int      @default(75)
-  esiEmployerRateBps   Int      @default(325)
-  esiGrossCeilingPaise Int      @default(2100000)
-  overtimeMultiplierBps Int     @default(0) // 0 = overtime not paid until configured
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  pfEmployeeRateBps          Int      @default(1200)
+  pfEmployerRateBps          Int      @default(1200)
+  pfWageCeilingPaise         Int      @default(1500000)
+  esiEmployeeRateBps         Int      @default(75)
+  esiEmployerRateBps         Int      @default(325)
+  esiGrossCeilingPaise       Int      @default(2100000)
+  overtimeMultiplierBps      Int      @default(0) // 0 = overtime not paid until configured
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 
-  users        User[]
-  departments  Department[]
-  designations Designation[]
-  employees    Employee[]
-  holidays     Holiday[]
-  leaveTypes   LeaveType[]
+  users         User[]
+  departments   Department[]
+  designations  Designation[]
+  employees     Employee[]
+  holidays      Holiday[]
+  leaveTypes    LeaveType[]
   announcements Announcement[]
-  payrollRuns  PayrollRun[]
-  auditLogs    AuditLog[]
+  payrollRuns   PayrollRun[]
+  auditLogs     AuditLog[]
 }
 
 model User {
@@ -168,11 +186,11 @@ model Notification {
 }
 
 model Department {
-  id             String     @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   name           String
   code           String
-  createdAt      DateTime   @default(now())
+  createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
   employees    Employee[]
@@ -182,10 +200,10 @@ model Department {
 }
 
 model Designation {
-  id             String     @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   title          String
-  createdAt      DateTime   @default(now())
+  createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
   employees    Employee[]
@@ -194,46 +212,46 @@ model Designation {
 }
 
 model Employee {
-  id                  String           @id @default(cuid())
-  organizationId      String
-  employeeCode        String
-  firstName           String
-  lastName            String
-  workEmail           String
-  personalEmail       String?
-  phone               String?
-  photoUrl            String?
-  dateOfBirth         DateTime?        @db.Date
-  joiningDate         DateTime         @db.Date
-  exitDate            DateTime?        @db.Date
-  status              EmployeeStatus   @default(ACTIVE)
-  onboardingStatus    OnboardingStatus @default(PENDING)
-  employmentType      EmploymentType   @default(FULL_TIME)
-  workLocation        String           @default("Head Office")
-  departmentId        String
-  designationId       String
-  managerId           String?
+  id                    String           @id @default(cuid())
+  organizationId        String
+  employeeCode          String
+  firstName             String
+  lastName              String
+  workEmail             String
+  personalEmail         String?
+  phone                 String?
+  photoUrl              String?
+  dateOfBirth           DateTime?        @db.Date
+  joiningDate           DateTime         @db.Date
+  exitDate              DateTime?        @db.Date
+  status                EmployeeStatus   @default(ACTIVE)
+  onboardingStatus      OnboardingStatus @default(PENDING)
+  employmentType        EmploymentType   @default(FULL_TIME)
+  workLocation          String           @default("Head Office")
+  departmentId          String
+  designationId         String
+  managerId             String?
   emergencyContactName  String?
   emergencyContactPhone String?
-  addressLine         String?
-  city                String?
-  state               String?
-  postalCode          String?
+  addressLine           String?
+  city                  String?
+  state                 String?
+  postalCode            String?
   // Restricted fields: stored encrypted (AES-256-GCM), only last4 is shown by default.
-  bankAccountCipher   String?
-  bankAccountLast4    String?
-  bankIfsc            String?
-  bankName            String?
-  panCipher           String?
-  panLast4            String?
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+  bankAccountCipher     String?
+  bankAccountLast4      String?
+  bankIfsc              String?
+  bankName              String?
+  panCipher             String?
+  panLast4              String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
-  organization   Organization        @relation(fields: [organizationId], references: [id])
-  department     Department          @relation(fields: [departmentId], references: [id])
-  designation    Designation         @relation(fields: [designationId], references: [id])
-  manager        Employee?           @relation("ReportingLine", fields: [managerId], references: [id])
-  reports        Employee[]          @relation("ReportingLine")
+  organization   Organization           @relation(fields: [organizationId], references: [id])
+  department     Department             @relation(fields: [departmentId], references: [id])
+  designation    Designation            @relation(fields: [designationId], references: [id])
+  manager        Employee?              @relation("ReportingLine", fields: [managerId], references: [id])
+  reports        Employee[]             @relation("ReportingLine")
   user           User?
   salaries       SalaryAssignment[]
   attendance     AttendanceRecord[]
@@ -242,6 +260,7 @@ model Employee {
   leaveRequests  LeaveRequest[]
   payrollEntries PayrollEntry[]
   adjustments    PayrollAdjustment[]
+  documents      EmployeeDocument[]
 
   @@unique([organizationId, employeeCode])
   @@unique([organizationId, workEmail])
@@ -250,24 +269,44 @@ model Employee {
   @@index([departmentId])
 }
 
+// Employee documents (ID proofs, contracts, certificates). Files are stored outside any public folder under a
+// random name and served only through the API, to HR and to the employee themself.
+model EmployeeDocument {
+  id             String           @id @default(cuid())
+  organizationId String
+  employeeId     String
+  category       DocumentCategory
+  title          String
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  storageName    String           @unique
+  uploadedById   String
+  createdAt      DateTime         @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([organizationId, employeeId])
+}
+
 model SalaryAssignment {
-  id                 String   @id @default(cuid())
-  organizationId     String
-  employeeId         String
-  effectiveFrom      DateTime @db.Date
-  basicPaise         Int
-  hraPaise           Int      @default(0)
-  conveyancePaise    Int      @default(0)
-  specialPaise       Int      @default(0)
-  otherAllowancePaise Int     @default(0)
+  id                   String   @id @default(cuid())
+  organizationId       String
+  employeeId           String
+  effectiveFrom        DateTime @db.Date
+  basicPaise           Int
+  hraPaise             Int      @default(0)
+  conveyancePaise      Int      @default(0)
+  specialPaise         Int      @default(0)
+  otherAllowancePaise  Int      @default(0)
   // Eligibility flags are explicit: nothing is assumed applicable.
-  pfApplicable       Boolean  @default(false)
-  esiApplicable      Boolean  @default(false)
-  professionalTaxPaise Int    @default(0)
+  pfApplicable         Boolean  @default(false)
+  esiApplicable        Boolean  @default(false)
+  professionalTaxPaise Int      @default(0)
   // Monthly TDS is entered by HR from the employee's tax computation (no statutory slabs are hardcoded).
-  monthlyTdsPaise    Int      @default(0)
-  createdById        String?
-  createdAt          DateTime @default(now())
+  monthlyTdsPaise      Int      @default(0)
+  createdById          String?
+  createdAt            DateTime @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id])
 
@@ -276,26 +315,33 @@ model SalaryAssignment {
 }
 
 model AttendanceRecord {
-  id              String           @id @default(cuid())
-  organizationId  String
-  employeeId      String
-  workDate        DateTime         @db.Date
-  status          AttendanceStatus
-  checkInAt       DateTime?
-  checkOutAt      DateTime?
-  breakMinutes    Int              @default(0)
-  workedMinutes   Int              @default(0)
-  lateMinutes     Int              @default(0)
-  overtimeMinutes Int              @default(0)
-  note            String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id                      String           @id @default(cuid())
+  organizationId          String
+  employeeId              String
+  workDate                DateTime         @db.Date
+  status                  AttendanceStatus
+  checkInAt               DateTime?
+  checkOutAt              DateTime?
+  breakMinutes            Int              @default(0)
+  workedMinutes           Int              @default(0)
+  lateMinutes             Int              @default(0)
+  overtimeMinutes         Int              @default(0)
+  // Overtime approval: only approved minutes are paid. Minutes may be approved in part.
+  overtimeStatus          OvertimeStatus   @default(NONE)
+  overtimeApprovedMinutes Int              @default(0)
+  overtimeReviewerId      String?
+  overtimeReviewedAt      DateTime?
+  overtimeComment         String?
+  note                    String?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
 
   employee Employee          @relation(fields: [employeeId], references: [id])
   punches  AttendancePunch[]
 
   @@unique([employeeId, workDate])
   @@index([organizationId, workDate])
+  @@index([organizationId, overtimeStatus])
 }
 
 // One punch-in / punch-out session. A day can have many; the AttendanceRecord holds the day's totals.
@@ -319,18 +365,18 @@ model AttendancePunch {
 }
 
 model AttendanceCorrection {
-  id              String           @id @default(cuid())
-  organizationId  String
-  employeeId      String
-  workDate        DateTime         @db.Date
+  id                String           @id @default(cuid())
+  organizationId    String
+  employeeId        String
+  workDate          DateTime         @db.Date
   requestedCheckIn  DateTime?
   requestedCheckOut DateTime?
-  reason          String
-  status          CorrectionStatus @default(PENDING)
-  reviewerId      String?
-  reviewComment   String?
-  reviewedAt      DateTime?
-  createdAt       DateTime         @default(now())
+  reason            String
+  status            CorrectionStatus @default(PENDING)
+  reviewerId        String?
+  reviewComment     String?
+  reviewedAt        DateTime?
+  createdAt         DateTime         @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id])
 
@@ -351,17 +397,17 @@ model Holiday {
 }
 
 model LeaveType {
-  id              String       @id @default(cuid())
-  organizationId  String
-  code            String
-  name            String
-  isPaid          Boolean      @default(true)
-  annualQuotaDays Decimal      @db.Decimal(5, 1)
-  accrual         LeaveAccrual @default(UPFRONT)
-  allowHalfDay    Boolean      @default(true)
-  carryForwardDays Decimal     @default(0) @db.Decimal(5, 1)
-  isActive        Boolean      @default(true)
-  createdAt       DateTime     @default(now())
+  id               String       @id @default(cuid())
+  organizationId   String
+  code             String
+  name             String
+  isPaid           Boolean      @default(true)
+  annualQuotaDays  Decimal      @db.Decimal(5, 1)
+  accrual          LeaveAccrual @default(UPFRONT)
+  allowHalfDay     Boolean      @default(true)
+  carryForwardDays Decimal      @default(0) @db.Decimal(5, 1)
+  isActive         Boolean      @default(true)
+  createdAt        DateTime     @default(now())
 
   organization Organization   @relation(fields: [organizationId], references: [id])
   requests     LeaveRequest[]
@@ -395,47 +441,47 @@ model LeaveRequest {
 }
 
 model PayrollRun {
-  id             String        @id @default(cuid())
-  organizationId String
-  year           Int
-  month          Int
-  status         PayrollStatus @default(DRAFT)
-  createdById    String
-  validatedAt    DateTime?
-  approvedById   String?
-  approvedAt     DateTime?
-  finalizedById  String?
-  finalizedAt    DateTime?
-  totalGrossPaise     Int @default(0)
-  totalDeductionsPaise Int @default(0)
-  totalNetPaise       Int @default(0)
-  totalEmployerPaise  Int @default(0)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id                   String        @id @default(cuid())
+  organizationId       String
+  year                 Int
+  month                Int
+  status               PayrollStatus @default(DRAFT)
+  createdById          String
+  validatedAt          DateTime?
+  approvedById         String?
+  approvedAt           DateTime?
+  finalizedById        String?
+  finalizedAt          DateTime?
+  totalGrossPaise      Int           @default(0)
+  totalDeductionsPaise Int           @default(0)
+  totalNetPaise        Int           @default(0)
+  totalEmployerPaise   Int           @default(0)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
-  organization Organization    @relation(fields: [organizationId], references: [id])
+  organization Organization   @relation(fields: [organizationId], references: [id])
   entries      PayrollEntry[]
 
   @@unique([organizationId, year, month])
 }
 
 model PayrollEntry {
-  id                    String        @id @default(cuid())
-  organizationId        String
-  payrollRunId          String
-  employeeId            String
-  paidDays              Decimal       @db.Decimal(5, 1)
-  lopDays               Decimal       @db.Decimal(5, 1)
-  grossPaise            Int
-  totalDeductionsPaise  Int
-  netPaise              Int
-  employerContribPaise  Int
+  id                   String        @id @default(cuid())
+  organizationId       String
+  payrollRunId         String
+  employeeId           String
+  paidDays             Decimal       @db.Decimal(5, 1)
+  lopDays              Decimal       @db.Decimal(5, 1)
+  grossPaise           Int
+  totalDeductionsPaise Int
+  netPaise             Int
+  employerContribPaise Int
   // Immutable snapshot of inputs and computed lines, written at finalization.
-  snapshot              Json
-  paymentStatus         PaymentStatus @default(NOT_PAID)
-  paidAt                DateTime?
-  paymentReference      String?
-  createdAt             DateTime      @default(now())
+  snapshot             Json
+  paymentStatus        PaymentStatus @default(NOT_PAID)
+  paidAt               DateTime?
+  paymentReference     String?
+  createdAt            DateTime      @default(now())
 
   run      PayrollRun @relation(fields: [payrollRunId], references: [id])
   employee Employee   @relation(fields: [employeeId], references: [id])

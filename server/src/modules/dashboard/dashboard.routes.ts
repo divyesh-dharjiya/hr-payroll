@@ -121,6 +121,7 @@ async function hrDashboard(orgId: string, today: string, weeklyOffDays: number[]
     visibleAnnouncements({ organizationId: orgId, role: 'HR_ADMIN', employeeId: null }, 5),
     prisma.holiday.findFirst({ where: { organizationId: orgId, holidayDate: todayDate }, select: { name: true } }),
   ]);
+  const pendingOvertime = await prisma.attendanceRecord.count({ where: { organizationId: orgId, overtimeStatus: 'PENDING' } });
   const present = todayRecords.filter((r) => PRESENT_STATUSES.includes(r.status as (typeof PRESENT_STATUSES)[number]) && r.checkInAt).length;
   const late = todayRecords.filter((r) => r.status === 'LATE').length;
   const leaveIds = new Set(approvedLeaveToday.map((l) => l.employeeId));
@@ -146,6 +147,7 @@ async function hrDashboard(orgId: string, today: string, weeklyOffDays: number[]
       absentToday: notCheckedIn,
       pendingLeaveRequests: pendingLeave,
       pendingCorrections,
+      pendingOvertime,
       employeesMissingBankDetails: missingBank,
     },
     today: { date: today, isWorkingDay, holiday: holidayToday?.name ?? null },
@@ -161,6 +163,7 @@ async function hrDashboard(orgId: string, today: string, weeklyOffDays: number[]
     pendingTasks: [
       ...(pendingLeave > 0 ? [{ key: 'leave', label: `${pendingLeave} leave request(s) waiting for decision`, href: '/leave' }] : []),
       ...(pendingCorrections > 0 ? [{ key: 'corrections', label: `${pendingCorrections} attendance correction(s) to review`, href: '/attendance' }] : []),
+      ...(pendingOvertime > 0 ? [{ key: 'overtime', label: `${pendingOvertime} day(s) of overtime to approve`, href: '/attendance' }] : []),
       ...(missingBank > 0 ? [{ key: 'bank', label: `${missingBank} active employee(s) without bank details`, href: '/employees' }] : []),
       ...(currentRun && currentRun.status !== 'FINALIZED' ? [{ key: 'payroll', label: `Payroll for ${MONTHS[currentRun.month - 1]} ${currentRun.year} is ${currentRun.status.toLowerCase()}`, href: '/payroll' }] : []),
     ],
@@ -214,6 +217,10 @@ async function managerDashboard(auth: AuthContext, today: string) {
     }),
   ]);
 
+  const [pendingOvertime, pendingCorrections] = await Promise.all([
+    prisma.attendanceRecord.count({ where: { organizationId: orgId, overtimeStatus: 'PENDING', employee: teamWhere } }),
+    prisma.attendanceCorrection.count({ where: { organizationId: orgId, status: 'PENDING', employee: teamWhere } }),
+  ]);
   const present = teamToday.filter((r) => r.checkInAt).length;
   const late = teamToday.filter((r) => r.status === 'LATE').length;
   const onLeave = upcomingAbsences.filter((l) => ymdOf(l.startDate) <= today && ymdOf(l.endDate) >= today).length;
@@ -225,6 +232,8 @@ async function managerDashboard(auth: AuthContext, today: string) {
       onLeaveToday: onLeave,
       notCheckedIn: Math.max(0, team.length - present - onLeave),
       pendingApprovals: pendingApprovals.length,
+      pendingOvertime,
+      pendingCorrections,
     },
     team: team.map((t) => ({ id: t.id, employeeCode: t.employeeCode, name: `${t.firstName} ${t.lastName}`, photoUrl: t.photoUrl, status: t.status, designation: t.designation.title, department: t.department.name, email: t.workEmail, phone: t.phone })),
     pendingApprovals: pendingApprovals.map((p) => ({ id: p.id, employee: `${p.employee.firstName} ${p.employee.lastName}`, leaveType: p.leaveType.code, startDate: ymdOf(p.startDate), endDate: ymdOf(p.endDate), days: Number(p.days) })),

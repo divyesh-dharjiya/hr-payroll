@@ -10,10 +10,10 @@
 //   employee@lotus-demo.example    - Employee (Engineering)
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
-import { Role, PrismaClient, type AttendanceStatus } from '@prisma/client';
+import { Role, PrismaClient, type AttendanceStatus, type OvertimeStatus } from '@prisma/client';
 import { encryptField, last4 } from '../src/lib/crypto';
 import { randomUUID } from 'node:crypto';
-import { summarizeDay, type AttendanceRules } from '../src/modules/attendance/attendance.rules';
+import { OVERTIME_MIN_CLAIM_MINUTES, summarizeDay, type AttendanceRules } from '../src/modules/attendance/attendance.rules';
 import { dateOnly, eachDay, todayIn, weekdayOf, zonedTimeToUtc } from '../src/lib/time';
 import { createRun, recalculateRun, validateRun, approveRun, finalizeRun, markPayment, addAdjustment } from '../src/modules/payroll/payroll.service';
 import type { AuthContext } from '../src/middleware/auth';
@@ -189,9 +189,8 @@ async function main() {
       esiEmployeeRateBps: 75,
       esiEmployerRateBps: 325,
       esiGrossCeilingPaise: 2_100_000,
-      // Overtime pay stays disabled in the demo: the approval workflow for overtime is not built yet, and the
-      // spec pays only approved overtime. Set a multiplier only after that workflow exists.
-      overtimeMultiplierBps: 0,
+      // Approved overtime is paid at 1.5x. Only minutes a manager or HR approved reach payroll.
+      overtimeMultiplierBps: 15000,
     },
   });
   const orgId = org.id;
@@ -433,10 +432,23 @@ async function main() {
   const records: {
     id: string; organizationId: string; employeeId: string; workDate: Date; status: AttendanceStatus; checkInAt: Date | null; checkOutAt: Date | null;
     breakMinutes: number; workedMinutes: number; lateMinutes: number; overtimeMinutes: number;
+    overtimeStatus: OvertimeStatus; overtimeApprovedMinutes: number; overtimeReviewedAt: Date | null; overtimeComment: string | null;
   }[] = [];
   const punches: { organizationId: string; employeeId: string; attendanceRecordId: string; inAt: Date; outAt: Date | null }[] = [];
   const at = (day: string, minutesOfDay: number) =>
     zonedTimeToUtc(day, `${String(Math.floor(minutesOfDay / 60)).padStart(2, '0')}:${String(minutesOfDay % 60).padStart(2, '0')}`, org.timezone);
+
+  // Overtime claims: older days were already reviewed (most approved, a few rejected); the last few working days
+  // are waiting for a decision so the approval queue has something to show.
+  const reviewCutoff = workingDayBefore(addDays(TODAY, -4));
+  const overtimeReview = (day: string, minutes: number, roll: number) => {
+    if (minutes < OVERTIME_MIN_CLAIM_MINUTES) return { overtimeStatus: 'NONE' as const, overtimeApprovedMinutes: 0, overtimeReviewedAt: null, overtimeComment: null };
+    if (day > reviewCutoff) return { overtimeStatus: 'PENDING' as const, overtimeApprovedMinutes: 0, overtimeReviewedAt: null, overtimeComment: null };
+    const reviewedAt = atIstEarly(addDays(day, 2));
+    if (roll < 0.1) return { overtimeStatus: 'REJECTED' as const, overtimeApprovedMinutes: 0, overtimeReviewedAt: reviewedAt, overtimeComment: 'Not agreed in advance with the team lead.' };
+    return { overtimeStatus: 'APPROVED' as const, overtimeApprovedMinutes: minutes, overtimeReviewedAt: reviewedAt, overtimeComment: null };
+  };
+  const atIstEarly = (ymd: string) => zonedTimeToUtc(ymd, '10:00', TIMEZONE);
 
   for (const r of ROSTER) {
     const id = empIds.get(r.code)!;
@@ -457,7 +469,8 @@ async function main() {
       } else {
         const lunchOut = 13 * 60 + Math.floor(rand() * 20);
         const lunchIn = lunchOut + 30 + Math.floor(rand() * 30);
-        const end = 18 * 60 + 30 + Math.floor(rand() * 80);
+        // Most days end around shift end; about one in five runs an hour or more late (overtime to approve).
+        const end = 18 * 60 + 30 + (rand() < 0.2 ? 55 + Math.floor(rand() * 60) : Math.floor(rand() * 25));
         sessions.push([start, lunchOut]);
         if (rand() < 0.35) {
           const teaOut = 16 * 60 + Math.floor(rand() * 20);
@@ -488,6 +501,7 @@ async function main() {
         workedMinutes: s.workedMinutes,
         lateMinutes: s.lateMinutes,
         overtimeMinutes: s.overtimeMinutes,
+        ...overtimeReview(day, s.overtimeMinutes, rand()),
       });
       for (const p of dayPunches) punches.push({ organizationId: orgId, employeeId: id, attendanceRecordId: recordId, inAt: p.inAt, outAt: p.outAt });
     }

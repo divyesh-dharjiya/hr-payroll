@@ -2,6 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { Api, ApiError } from './api';
 import type { Permission, SessionUser } from './models';
+import { setOrgTimeZone } from '../shared/format';
 
 /** Session state for the UI. Permissions shown here only shape navigation; the API enforces every action. */
 @Injectable({ providedIn: 'root' })
@@ -38,6 +39,7 @@ export class Auth {
     try {
       // `/auth/session` answers 200 with `user: null` when signed out, so visitors see no failed request.
       const { user } = await this.api.get<{ user: SessionUser | null }>('/auth/session');
+      setOrgTimeZone(user?.organizationTimezone);
       this.state.set(user);
     } catch (err) {
       this.state.set(null);
@@ -50,6 +52,7 @@ export class Auth {
 
   async login(email: string, password: string): Promise<void> {
     const { user } = await this.api.post<{ user: SessionUser }>('/auth/login', { email, password });
+    setOrgTimeZone(user.organizationTimezone);
     this.state.set(user);
     this.loaded = true;
   }

@@ -176,3 +176,52 @@ describe('input validation', () => {
     expect(res.status).toBe(415);
   });
 });
+
+describe('session probe, payslip PDF, overtime and corrections', () => {
+  it('answers the session probe with user null when signed out, without a 401', async () => {
+    const res = await call(null, 'GET', '/api/auth/session');
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ user: null });
+    const signedIn = await call(employee, 'GET', '/api/auth/session');
+    expect(signedIn.json.user.email).toBe(`employee@${DOMAIN}`);
+    expect(JSON.stringify(signedIn.json)).not.toContain('passwordHash');
+  });
+
+  it('serves an employee their own payslip as a PDF and hides other payslips', async () => {
+    const own = await fetch(`${base}/api/payroll/payslips/${augEntryOfVikram}/pdf`, { headers: { Cookie: employee } });
+    expect(own.status).toBe(200);
+    expect(own.headers.get('content-type')).toBe('application/pdf');
+    expect(Buffer.from(await own.arrayBuffer()).subarray(0, 5).toString()).toBe('%PDF-');
+
+    const other = await prisma.payrollEntry.findFirstOrThrow({ where: { employeeId: arjunId, run: { status: 'FINALIZED' } } });
+    const res = await call(employee, 'GET', `/api/payroll/payslips/${other.id}/pdf`);
+    expect(res.status).toBe(404);
+  });
+
+  it('does not let employees review overtime', async () => {
+    const res = await call(employee, 'POST', '/api/attendance/overtime/review', { ids: ['x'], decision: 'APPROVE' });
+    expect(res.status).toBe(403);
+  });
+
+  it('limits managers to overtime of their direct reports', async () => {
+    const outside = await prisma.attendanceRecord.findFirst({ where: { overtimeStatus: { not: 'NONE' }, employee: { NOT: { managerId: arjunId } } } });
+    if (!outside) return;
+    const res = await call(manager, 'POST', '/api/attendance/overtime/review', { ids: [outside.id], decision: 'APPROVE' });
+    expect(res.status).toBe(404);
+    const list = await call(manager, 'GET', '/api/attendance/overtime');
+    expect(list.status).toBe(200);
+    expect(list.json.items.every((i: { employee: { id: string } }) => i.employee.id !== outside.employeeId)).toBe(true);
+  });
+
+  it('rejects a correction whose time is on another day', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await call(employee, 'POST', '/api/attendance/corrections', {
+      workDate: today,
+      requestedCheckIn: '2001-01-01T09:30:00+05:30',
+      requestedCheckOut: '2001-01-01T18:30:00+05:30',
+      reason: 'Integration test: wrong day',
+    });
+    expect(res.status).toBe(400);
+    expect(res.json.error.details.map((d: { field: string }) => d.field)).toContain('requestedCheckIn');
+  });
+});

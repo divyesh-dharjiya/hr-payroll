@@ -6,7 +6,11 @@ import * as svc from './attendance.service';
 export const attendanceRouter = Router();
 
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the YYYY-MM-DD format.');
-const isoInstant = z.string().datetime({ offset: true, message: 'Use an ISO date-time such as 2026-10-19T09:45:00+05:30.' });
+// An instant with an offset, or a wall-clock time without one (read in the organization timezone).
+const isoInstant = z.union(
+  [z.string().datetime({ offset: true }), z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/)],
+  { message: 'Use a date-time such as 2026-10-19T09:45 or 2026-10-19T09:45:00+05:30.' },
+);
 
 attendanceRouter.get('/today', async (req, res) => {
   res.json(await svc.getToday(requireAuth(req)));
@@ -63,6 +67,27 @@ attendanceRouter.post('/corrections', async (req, res) => {
 attendanceRouter.get('/corrections', async (req, res) => {
   const status = z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional().parse(req.query.status);
   res.json({ items: await svc.listCorrections(requireAuth(req), status) });
+});
+
+// Overtime: `mine=true` lists the caller's own claims; otherwise the reviewer's scope (team or company).
+attendanceRouter.get('/overtime', async (req, res) => {
+  const q = z.object({ status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(), mine: z.enum(['true', 'false']).optional() }).parse(req.query);
+  res.json({ items: await svc.listOvertime(requireAuth(req), q.status, q.mine === 'true') });
+});
+
+attendanceRouter.post('/overtime/review', async (req, res) => {
+  const body = z
+    .object({
+      ids: z.array(z.string().min(1)).min(1, 'Choose at least one day.').max(200),
+      decision: z.enum(['APPROVE', 'REJECT']),
+      minutes: z.number().int().positive().optional(),
+      comment: z.string().trim().max(500).optional(),
+    })
+    .parse(req.body);
+  if (body.decision === 'REJECT' && !body.comment) {
+    return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Add a comment when rejecting overtime.', details: [{ field: 'comment', message: 'Add a reason.' }] } });
+  }
+  res.json(await svc.reviewOvertime(requireAuth(req), body, req));
 });
 
 attendanceRouter.post('/corrections/:id/review', async (req, res) => {

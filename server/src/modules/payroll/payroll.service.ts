@@ -169,7 +169,8 @@ async function recalculate(auth: AuthContext, run: { id: string; year: number; m
     const counts: Record<string, number> = {};
     for (const d of days) {
       counts[d.status] = (counts[d.status] ?? 0) + 1;
-      overtimeMinutes += d.overtimeMinutes ?? 0;
+      // Only overtime a manager or HR approved is paid.
+      overtimeMinutes += d.overtimeApprovedMinutes ?? 0;
     }
 
     const adjustments = await prisma.payrollAdjustment.findMany({

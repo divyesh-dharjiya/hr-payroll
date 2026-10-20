@@ -26,6 +26,7 @@ export interface SessionUser {
   employeeId: string | null;
   organizationId: string;
   organizationName: string;
+  organizationTimezone: string;
   photoUrl: string | null;
   title: string | null;
   permissions: Permission[];

@@ -5,8 +5,8 @@ import { AppError } from '../../lib/errors';
 import { writeAudit } from '../../lib/audit';
 import type { AuthContext } from '../../middleware/auth';
 import { employeeScope } from '../employees/employees.service';
-import { dateOnly, eachDay, minutesBetween, todayIn, weekdayOf, ymdOf } from '../../lib/time';
-import { correctionTimeErrors, effectiveDayStatus, shiftWindow, summarizeDay, type AttendanceRules } from './attendance.rules';
+import { dateOnly, eachDay, minutesBetween, todayIn, weekdayOf, ymdOf, zonedTimeToUtc } from '../../lib/time';
+import { correctionTimeErrors, effectiveDayStatus, overtimeAfterRecalc, shiftWindow, summarizeDay, type AttendanceRules } from './attendance.rules';
 import { hrUserIds, managerUserIdFor, notifyUsers, userIdForEmployee } from '../../lib/notify';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -87,9 +87,17 @@ export async function nonWorkingDay(orgId: string, workDate: string, weeklyOffDa
 
 /** Recomputes a day's totals from its punches and stores them on the attendance record. */
 async function persistDay(tx: Tx, recordId: string, rules: AttendanceRules) {
-  const record = await tx.attendanceRecord.findUniqueOrThrow({ where: { id: recordId }, select: { workDate: true } });
+  const record = await tx.attendanceRecord.findUniqueOrThrow({
+    where: { id: recordId },
+    select: { workDate: true, overtimeMinutes: true, overtimeStatus: true, overtimeApprovedMinutes: true },
+  });
   const punches = await tx.attendancePunch.findMany({ where: { attendanceRecordId: recordId }, orderBy: { inAt: 'asc' } });
   const s = summarizeDay(punches, ymdOf(record.workDate), rules);
+  const overtime = overtimeAfterRecalc(
+    { status: record.overtimeStatus, approvedMinutes: record.overtimeApprovedMinutes, overtimeMinutes: record.overtimeMinutes },
+    s.overtimeMinutes,
+  );
+  const decisionKept = overtime.status === record.overtimeStatus && overtime.status !== 'PENDING' && overtime.status !== 'NONE';
   await tx.attendanceRecord.update({
     where: { id: recordId },
     data: {
@@ -99,6 +107,9 @@ async function persistDay(tx: Tx, recordId: string, rules: AttendanceRules) {
       workedMinutes: s.workedMinutes,
       lateMinutes: s.lateMinutes,
       overtimeMinutes: s.overtimeMinutes,
+      overtimeStatus: overtime.status,
+      overtimeApprovedMinutes: overtime.approvedMinutes,
+      ...(decisionKept ? {} : { overtimeReviewerId: null, overtimeReviewedAt: null, overtimeComment: null }),
       status: punches.length ? s.status : 'PRESENT',
     },
   });
@@ -262,6 +273,9 @@ export interface DailyStatus {
   workedMinutes?: number;
   lateMinutes?: number;
   overtimeMinutes?: number;
+  /** Overtime approved for payment (see the overtime approval workflow). */
+  overtimeApprovedMinutes?: number;
+  overtimeStatus?: string;
 }
 
 export async function dailyStatusesFor(
@@ -310,6 +324,8 @@ export async function dailyStatusesFor(
         workedMinutes: record.workedMinutes,
         lateMinutes: record.lateMinutes,
         overtimeMinutes: record.overtimeMinutes,
+        overtimeApprovedMinutes: record.overtimeApprovedMinutes,
+        overtimeStatus: record.overtimeStatus,
       };
     }
     if (holidaySet.has(date)) return { date, status: 'HOLIDAY' };
@@ -344,6 +360,7 @@ export async function monthCalendar(auth: AuthContext, employeeId: string, year:
       workedMinutes: days.reduce((s, d) => s + (d.workedMinutes ?? 0), 0),
       lateMinutes: days.reduce((s, d) => s + (d.lateMinutes ?? 0), 0),
       overtimeMinutes: days.reduce((s, d) => s + (d.overtimeMinutes ?? 0), 0),
+      overtimeApprovedMinutes: days.reduce((s, d) => s + (d.overtimeApprovedMinutes ?? 0), 0),
     },
   };
 }
@@ -351,6 +368,12 @@ export async function monthCalendar(auth: AuthContext, employeeId: string, year:
 // ---------------------------------------------------------------------------------------------------------------
 // Corrections
 // ---------------------------------------------------------------------------------------------------------------
+/** Parses an instant with an offset as is, and a wall-clock time without one in the organization timezone. */
+function orgInstant(value: string, timeZone: string): Date {
+  const local = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(:\d{2})?$/.exec(value);
+  return local ? zonedTimeToUtc(local[1], local[2], timeZone) : new Date(value);
+}
+
 export interface CorrectionInput {
   workDate: string;
   requestedCheckIn?: string;
@@ -369,8 +392,8 @@ export async function requestCorrection(auth: AuthContext, input: CorrectionInpu
   if (!input.requestedCheckIn && !input.requestedCheckOut) {
     throw AppError.badRequest('Enter a check-in or check-out time to correct.');
   }
-  const checkIn = input.requestedCheckIn ? new Date(input.requestedCheckIn) : null;
-  const checkOut = input.requestedCheckOut ? new Date(input.requestedCheckOut) : null;
+  const checkIn = input.requestedCheckIn ? orgInstant(input.requestedCheckIn, rules.timezone) : null;
+  const checkOut = input.requestedCheckOut ? orgInstant(input.requestedCheckOut, rules.timezone) : null;
   if (checkIn && checkOut && checkOut <= checkIn) {
     throw AppError.badRequest('Check-out must be after check-in.', [{ field: 'requestedCheckOut', message: 'Check-out must be after check-in.' }]);
   }
@@ -565,4 +588,115 @@ export async function monthlySummary(auth: AuthContext, year: number, month: num
     });
   }
   return { year, month, from, to, rows };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Overtime approval (rules in attendance.rules.ts). Managers review direct reports, HR reviews everyone, and nobody
+// reviews their own overtime. Payroll pays approved minutes only.
+// ---------------------------------------------------------------------------------------------------------------
+
+export async function listOvertime(auth: AuthContext, status?: 'PENDING' | 'APPROVED' | 'REJECTED', mine = false) {
+  const rows = await prisma.attendanceRecord.findMany({
+    where: {
+      organizationId: auth.organizationId,
+      overtimeStatus: status ?? { not: 'NONE' },
+      employee: mine ? { id: auth.employeeId ?? '__none__' } : employeeScope(auth),
+    },
+    orderBy: [{ workDate: 'desc' }],
+    take: 300,
+    include: { employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } } },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    employee: { id: r.employee.id, name: `${r.employee.firstName} ${r.employee.lastName}`, employeeCode: r.employee.employeeCode },
+    workDate: ymdOf(r.workDate),
+    checkInAt: r.checkInAt?.toISOString() ?? null,
+    checkOutAt: r.checkOutAt?.toISOString() ?? null,
+    workedMinutes: r.workedMinutes,
+    overtimeMinutes: r.overtimeMinutes,
+    approvedMinutes: r.overtimeApprovedMinutes,
+    status: r.overtimeStatus,
+    comment: r.overtimeComment,
+    isOwn: r.employeeId === auth.employeeId,
+  }));
+}
+
+export interface OvertimeReviewInput {
+  ids: string[];
+  decision: 'APPROVE' | 'REJECT';
+  /** Approve only part of the overtime; allowed when reviewing a single day. */
+  minutes?: number;
+  comment?: string;
+}
+
+export async function reviewOvertime(auth: AuthContext, input: OvertimeReviewInput, req?: Request) {
+  if (auth.role === 'EMPLOYEE') throw AppError.forbidden();
+  if (input.minutes !== undefined && input.ids.length !== 1) {
+    throw AppError.badRequest('Approve part of the overtime one day at a time.', [{ field: 'minutes', message: 'Review a single day.' }]);
+  }
+  const records = await prisma.attendanceRecord.findMany({
+    where: { id: { in: input.ids }, organizationId: auth.organizationId, employee: employeeScope(auth) },
+    include: { employee: { select: { firstName: true, lastName: true } } },
+  });
+  if (records.length !== new Set(input.ids).size) throw AppError.notFound('Overtime entry not found.');
+  for (const r of records) {
+    if (r.employeeId === auth.employeeId) throw AppError.forbidden('You cannot review your own overtime.');
+    if (r.overtimeStatus !== 'PENDING') throw AppError.invalidState(`Overtime for ${r.employee.firstName} on ${ymdOf(r.workDate)} has already been reviewed.`);
+    if (input.minutes !== undefined && (input.minutes < 1 || input.minutes > r.overtimeMinutes)) {
+      throw AppError.badRequest(`Approve between 1 and ${r.overtimeMinutes} minutes.`, [{ field: 'minutes', message: `At most ${r.overtimeMinutes} minutes.` }]);
+    }
+  }
+  // Overtime is paid through payroll: a period that is approved or finalized is closed for changes.
+  const periods = new Map<string, { year: number; month: number }>();
+  for (const r of records) {
+    const ymd = ymdOf(r.workDate);
+    periods.set(ymd.slice(0, 7), { year: Number(ymd.slice(0, 4)), month: Number(ymd.slice(5, 7)) });
+  }
+  const runs = await prisma.payrollRun.findMany({
+    where: { organizationId: auth.organizationId, OR: [...periods.values()].map((p) => ({ year: p.year, month: p.month })) },
+    select: { id: true, year: true, month: true, status: true },
+  });
+  const closed = runs.find((run) => run.status === 'APPROVED' || run.status === 'FINALIZED');
+  if (closed) throw AppError.invalidState(`Payroll for ${closed.month}/${closed.year} is ${closed.status.toLowerCase()}, so its overtime can no longer change.`);
+
+  const approve = input.decision === 'APPROVE';
+  const reviewedAt = new Date();
+  await prisma.$transaction(async (tx) => {
+    for (const r of records) {
+      const claimed = await tx.attendanceRecord.updateMany({
+        where: { id: r.id, overtimeStatus: 'PENDING' },
+        data: {
+          overtimeStatus: approve ? 'APPROVED' : 'REJECTED',
+          overtimeApprovedMinutes: approve ? (input.minutes ?? r.overtimeMinutes) : 0,
+          overtimeReviewerId: auth.userId,
+          overtimeReviewedAt: reviewedAt,
+          overtimeComment: input.comment ?? null,
+        },
+      });
+      if (claimed.count === 0) throw AppError.invalidState('Someone else reviewed this overtime first. Refresh and try again.');
+    }
+    // A validated run no longer reflects the data: send it back to draft (as adjustments do).
+    for (const run of runs.filter((x) => x.status === 'VALIDATED')) {
+      await tx.payrollRun.updateMany({ where: { id: run.id, status: 'VALIDATED' }, data: { status: 'DRAFT', validatedAt: null } });
+    }
+    await writeAudit(auth, auth.organizationId, {
+      action: approve ? 'attendance.overtime_approved' : 'attendance.overtime_rejected',
+      entityType: 'AttendanceRecord',
+      entityId: records.length === 1 ? records[0].id : null,
+      summary: { days: records.length, minutes: input.minutes ?? null },
+    }, req, tx);
+  });
+
+  // One notification per person, however many days were reviewed.
+  const byEmployee = new Map<string, number>();
+  for (const r of records) byEmployee.set(r.employeeId, (byEmployee.get(r.employeeId) ?? 0) + 1);
+  for (const [employeeId, days] of byEmployee) {
+    await notifyUsers(auth.organizationId, [await userIdForEmployee(employeeId)], {
+      kind: approve ? 'attendance.overtime_approved' : 'attendance.overtime_rejected',
+      title: approve ? 'Overtime approved' : 'Overtime not approved',
+      body: `${auth.name} ${approve ? 'approved' : 'rejected'} your overtime for ${days} day(s).${input.comment ? ` Comment: ${input.comment}` : ''}`,
+      link: '/attendance',
+    });
+  }
+  return { reviewed: records.length, status: approve ? 'APPROVED' : 'REJECTED' };
 }

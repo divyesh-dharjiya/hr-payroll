@@ -9,7 +9,7 @@ import { Auth } from '../../core/auth';
 import { StatCard, StateView, StatusBadge } from '../../shared/ui';
 import { BarChart, DonutChart, type BarDatum } from '../../shared/charts';
 import { Avatar } from '../../shared/avatar';
-import { formatDate, formatInstant, formatPaise, monthName } from '../../shared/format';
+import { currentOrgHour, currentYearMonth, formatDate, formatInstant, formatPaise, monthName, todayYmd } from '../../shared/format';
 import { TodayAttendanceCard } from '../attendance/today-card';
 
 // Shapes returned by GET /api/dashboard. Each view is built on the server from database queries.
@@ -412,7 +412,7 @@ export class Dashboard implements OnInit {
   readonly formatPaise = formatPaise;
   readonly formatDate = formatDate;
   readonly heroBars = [34, 52, 44, 66, 58];
-  readonly todayLabel = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  readonly todayLabel = new Date(`${todayYmd()}T12:00:00`).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   readonly hr = computed(() => this.data() as HrDashboard);
   readonly manager = computed(() => this.data() as ManagerDashboard);
@@ -421,7 +421,7 @@ export class Dashboard implements OnInit {
 
   readonly greeting = computed(() => {
     const name = this.auth.user()?.name.split(' ')[0] ?? '';
-    const hour = new Date().getHours();
+    const hour = currentOrgHour();
     const part = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
     return `${part}, ${name}`;
   });
@@ -429,7 +429,7 @@ export class Dashboard implements OnInit {
   readonly subtitle = computed(() => {
     const d = this.data();
     if (!d) return 'Getting your workspace ready…';
-    if (d.view === 'hr') return `Here's how ${this.auth.user()?.organizationName || 'your company'} is doing in ${monthName(new Date().getMonth() + 1)}.`;
+    if (d.view === 'hr') return `Here's how ${this.auth.user()?.organizationName || 'your company'} is doing in ${monthName(currentYearMonth().month)}.`;
     if (d.view === 'manager') return 'Your team at a glance, and anything waiting for your decision.';
     return 'Your attendance, leave and pay in one place.';
   });
