@@ -1,0 +1,500 @@
+// PeopleHub database schema.
+// Conventions:
+//  - Every company-owned row carries `organizationId` (multi-tenant ready) and is always queried through it.
+//  - Money is stored as integer paise (1 INR = 100 paise). Never use floats for money.
+//  - Calendar dates (attendance day, leave day, holiday) are DATE columns; instants are TIMESTAMPTZ (UTC).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  HR_ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  ON_NOTICE
+  EXITED
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+}
+
+enum OnboardingStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  HALF_DAY
+  ABSENT
+  ON_LEAVE
+  HOLIDAY
+  WEEKLY_OFF
+  WFH
+}
+
+enum CorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LeaveAccrual {
+  UPFRONT
+  MONTHLY
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  CANCEL_REQUESTED
+}
+
+enum PayrollStatus {
+  DRAFT
+  VALIDATED
+  APPROVED
+  FINALIZED
+}
+
+enum PaymentStatus {
+  NOT_PAID
+  PAID
+}
+
+enum AdjustmentKind {
+  EARNING
+  DEDUCTION
+}
+
+model Organization {
+  id                   String   @id @default(cuid())
+  name                 String
+  legalName            String?
+  logoUrl              String?
+  timezone             String   @default("Asia/Kolkata")
+  currency             String   @default("INR")
+  // 0 = Sunday ... 6 = Saturday
+  weeklyOffDays        Int[]    @default([0])
+  financialYearStartMonth Int   @default(4)
+  shiftStart           String   @default("09:30") // HH:mm in organization timezone
+  shiftEnd             String   @default("18:30")
+  graceMinutes         Int      @default(10)
+  standardBreakMinutes Int      @default(60)
+  breakDeductionAfterMinutes Int @default(360)
+  // Payroll rule configuration (rates are stored as basis points: 1200 = 12.00%)
+  pfEmployeeRateBps    Int      @default(1200)
+  pfEmployerRateBps    Int      @default(1200)
+  pfWageCeilingPaise   Int      @default(1500000)
+  esiEmployeeRateBps   Int      @default(75)
+  esiEmployerRateBps   Int      @default(325)
+  esiGrossCeilingPaise Int      @default(2100000)
+  overtimeMultiplierBps Int     @default(0) // 0 = overtime not paid until configured
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  users        User[]
+  departments  Department[]
+  designations Designation[]
+  employees    Employee[]
+  holidays     Holiday[]
+  leaveTypes   LeaveType[]
+  announcements Announcement[]
+  payrollRuns  PayrollRun[]
+  auditLogs    AuditLog[]
+}
+
+model User {
+  id                     String    @id @default(cuid())
+  organizationId         String
+  email                  String    @unique
+  name                   String
+  passwordHash           String
+  role                   Role
+  isActive               Boolean   @default(true)
+  tokenVersion           Int       @default(0)
+  failedLoginCount       Int       @default(0)
+  lockedUntil            DateTime?
+  lastLoginAt            DateTime?
+  passwordResetTokenHash String?
+  passwordResetExpiresAt DateTime?
+  employeeId             String?   @unique
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  employee      Employee?      @relation(fields: [employeeId], references: [id])
+  auditLogs     AuditLog[]
+  notifications Notification[]
+
+  @@index([organizationId])
+}
+
+// In-app notifications (leave decisions, approvals waiting, payslips ready). Delivered to one user each.
+model Notification {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String
+  kind           String
+  title          String
+  body           String
+  link           String?
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+model Department {
+  id             String     @id @default(cuid())
+  organizationId String
+  name           String
+  code           String
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  employees    Employee[]
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, code])
+}
+
+model Designation {
+  id             String     @id @default(cuid())
+  organizationId String
+  title          String
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  employees    Employee[]
+
+  @@unique([organizationId, title])
+}
+
+model Employee {
+  id                  String           @id @default(cuid())
+  organizationId      String
+  employeeCode        String
+  firstName           String
+  lastName            String
+  workEmail           String
+  personalEmail       String?
+  phone               String?
+  photoUrl            String?
+  dateOfBirth         DateTime?        @db.Date
+  joiningDate         DateTime         @db.Date
+  exitDate            DateTime?        @db.Date
+  status              EmployeeStatus   @default(ACTIVE)
+  onboardingStatus    OnboardingStatus @default(PENDING)
+  employmentType      EmploymentType   @default(FULL_TIME)
+  workLocation        String           @default("Head Office")
+  departmentId        String
+  designationId       String
+  managerId           String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  addressLine         String?
+  city                String?
+  state               String?
+  postalCode          String?
+  // Restricted fields: stored encrypted (AES-256-GCM), only last4 is shown by default.
+  bankAccountCipher   String?
+  bankAccountLast4    String?
+  bankIfsc            String?
+  bankName            String?
+  panCipher           String?
+  panLast4            String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  department     Department          @relation(fields: [departmentId], references: [id])
+  designation    Designation         @relation(fields: [designationId], references: [id])
+  manager        Employee?           @relation("ReportingLine", fields: [managerId], references: [id])
+  reports        Employee[]          @relation("ReportingLine")
+  user           User?
+  salaries       SalaryAssignment[]
+  attendance     AttendanceRecord[]
+  punches        AttendancePunch[]
+  corrections    AttendanceCorrection[]
+  leaveRequests  LeaveRequest[]
+  payrollEntries PayrollEntry[]
+  adjustments    PayrollAdjustment[]
+
+  @@unique([organizationId, employeeCode])
+  @@unique([organizationId, workEmail])
+  @@index([organizationId, status])
+  @@index([managerId])
+  @@index([departmentId])
+}
+
+model SalaryAssignment {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  employeeId         String
+  effectiveFrom      DateTime @db.Date
+  basicPaise         Int
+  hraPaise           Int      @default(0)
+  conveyancePaise    Int      @default(0)
+  specialPaise       Int      @default(0)
+  otherAllowancePaise Int     @default(0)
+  // Eligibility flags are explicit: nothing is assumed applicable.
+  pfApplicable       Boolean  @default(false)
+  esiApplicable      Boolean  @default(false)
+  professionalTaxPaise Int    @default(0)
+  // Monthly TDS is entered by HR from the employee's tax computation (no statutory slabs are hardcoded).
+  monthlyTdsPaise    Int      @default(0)
+  createdById        String?
+  createdAt          DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, effectiveFrom])
+  @@index([organizationId])
+}
+
+model AttendanceRecord {
+  id              String           @id @default(cuid())
+  organizationId  String
+  employeeId      String
+  workDate        DateTime         @db.Date
+  status          AttendanceStatus
+  checkInAt       DateTime?
+  checkOutAt      DateTime?
+  breakMinutes    Int              @default(0)
+  workedMinutes   Int              @default(0)
+  lateMinutes     Int              @default(0)
+  overtimeMinutes Int              @default(0)
+  note            String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  employee Employee          @relation(fields: [employeeId], references: [id])
+  punches  AttendancePunch[]
+
+  @@unique([employeeId, workDate])
+  @@index([organizationId, workDate])
+}
+
+// One punch-in / punch-out session. A day can have many; the AttendanceRecord holds the day's totals.
+// A partial unique index (see migration) allows at most one open session (outAt IS NULL) per employee.
+model AttendancePunch {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  employeeId         String
+  attendanceRecordId String
+  inAt               DateTime
+  outAt              DateTime?
+  // Set when an unclosed session from an earlier day was closed automatically at that day's shift end.
+  autoClosed         Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+
+  record   AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  employee Employee         @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, inAt])
+  @@index([attendanceRecordId])
+}
+
+model AttendanceCorrection {
+  id              String           @id @default(cuid())
+  organizationId  String
+  employeeId      String
+  workDate        DateTime         @db.Date
+  requestedCheckIn  DateTime?
+  requestedCheckOut DateTime?
+  reason          String
+  status          CorrectionStatus @default(PENDING)
+  reviewerId      String?
+  reviewComment   String?
+  reviewedAt      DateTime?
+  createdAt       DateTime         @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([organizationId, status])
+  @@index([employeeId])
+}
+
+model Holiday {
+  id             String   @id @default(cuid())
+  organizationId String
+  holidayDate    DateTime @db.Date
+  name           String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, holidayDate])
+}
+
+model LeaveType {
+  id              String       @id @default(cuid())
+  organizationId  String
+  code            String
+  name            String
+  isPaid          Boolean      @default(true)
+  annualQuotaDays Decimal      @db.Decimal(5, 1)
+  accrual         LeaveAccrual @default(UPFRONT)
+  allowHalfDay    Boolean      @default(true)
+  carryForwardDays Decimal     @default(0) @db.Decimal(5, 1)
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+
+  organization Organization   @relation(fields: [organizationId], references: [id])
+  requests     LeaveRequest[]
+
+  @@unique([organizationId, code])
+}
+
+model LeaveRequest {
+  id              String             @id @default(cuid())
+  organizationId  String
+  employeeId      String
+  leaveTypeId     String
+  startDate       DateTime           @db.Date
+  endDate         DateTime           @db.Date
+  isHalfDay       Boolean            @default(false)
+  days            Decimal            @db.Decimal(5, 1)
+  reason          String
+  status          LeaveRequestStatus @default(PENDING)
+  deciderId       String?
+  decisionComment String?
+  decidedAt       DateTime?
+  cancelReason    String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([organizationId, status])
+  @@index([employeeId, startDate])
+}
+
+model PayrollRun {
+  id             String        @id @default(cuid())
+  organizationId String
+  year           Int
+  month          Int
+  status         PayrollStatus @default(DRAFT)
+  createdById    String
+  validatedAt    DateTime?
+  approvedById   String?
+  approvedAt     DateTime?
+  finalizedById  String?
+  finalizedAt    DateTime?
+  totalGrossPaise     Int @default(0)
+  totalDeductionsPaise Int @default(0)
+  totalNetPaise       Int @default(0)
+  totalEmployerPaise  Int @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  entries      PayrollEntry[]
+
+  @@unique([organizationId, year, month])
+}
+
+model PayrollEntry {
+  id                    String        @id @default(cuid())
+  organizationId        String
+  payrollRunId          String
+  employeeId            String
+  paidDays              Decimal       @db.Decimal(5, 1)
+  lopDays               Decimal       @db.Decimal(5, 1)
+  grossPaise            Int
+  totalDeductionsPaise  Int
+  netPaise              Int
+  employerContribPaise  Int
+  // Immutable snapshot of inputs and computed lines, written at finalization.
+  snapshot              Json
+  paymentStatus         PaymentStatus @default(NOT_PAID)
+  paidAt                DateTime?
+  paymentReference      String?
+  createdAt             DateTime      @default(now())
+
+  run      PayrollRun @relation(fields: [payrollRunId], references: [id])
+  employee Employee   @relation(fields: [employeeId], references: [id])
+
+  @@unique([payrollRunId, employeeId])
+  @@index([employeeId])
+  @@index([organizationId])
+}
+
+model PayrollAdjustment {
+  id             String         @id @default(cuid())
+  organizationId String
+  employeeId     String
+  year           Int
+  month          Int
+  kind           AdjustmentKind
+  label          String
+  amountPaise    Int
+  createdById    String
+  createdAt      DateTime       @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([organizationId, year, month])
+  @@index([employeeId])
+}
+
+model Announcement {
+  id             String    @id @default(cuid())
+  organizationId String
+  title          String
+  body           String
+  publishAt      DateTime  @default(now())
+  expiresAt      DateTime?
+  audienceRole   Role?
+  departmentId   String?
+  createdById    String
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, publishAt])
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorId        String?
+  actorEmail     String?
+  action         String
+  entityType     String
+  entityId       String?
+  summary        Json?
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  actor        User?        @relation(fields: [actorId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+}

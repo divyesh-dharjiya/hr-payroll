@@ -1,0 +1,189 @@
+import { ChangeDetectionStrategy, Component, EventEmitter, OnInit, Output, computed, inject } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { AttendanceState, formatDuration } from '../../core/attendance-state';
+import { StateView, StatusBadge, type Tone } from '../../shared/ui';
+import { formatDate, formatMinutes } from '../../shared/format';
+
+const STATUS: Record<string, { label: string; tone: Tone }> = {
+  PRESENT: { label: 'Present', tone: 'ok' },
+  LATE: { label: 'Late arrival', tone: 'warn' },
+  HALF_DAY: { label: 'Half day', tone: 'warn' },
+};
+
+/**
+ * Today's attendance: live punched time, the punch toggle, every session of the day, and the totals.
+ * Timestamps are server-generated; location and identity are not verified.
+ */
+@Component({
+  selector: 'ph-today-attendance',
+  standalone: true,
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [MatButtonModule, MatIconModule, MatProgressSpinnerModule, StateView, StatusBadge],
+  template: `
+    <section class="card today" aria-labelledby="today-attendance-title">
+      <div class="head">
+        <h2 id="today-attendance-title" class="card-title">Today's attendance</h2>
+        @if (t(); as d) {
+          <span class="muted small">{{ formatDate(d.workDate) }} · shift {{ d.shift.start }}–{{ d.shift.end }}</span>
+        }
+      </div>
+      <ph-state [state]="viewState()" (retry)="state.load()" message="Attendance could not be loaded.">
+        @if (t(); as d) {
+          @if (!d.hasProfile) {
+            <p class="muted">Your account is not linked to an employee profile, so punching is not available.</p>
+          } @else {
+            @if (d.nonWorking && !d.canPunchOut) {
+              <div class="off-day" role="status">
+                <span class="off-icon" aria-hidden="true"><mat-icon>{{ d.nonWorking.kind === 'HOLIDAY' ? 'celebration' : 'weekend' }}</mat-icon></span>
+                <div>
+                  <strong>{{ d.nonWorking.kind === 'HOLIDAY' ? 'Holiday: ' + d.nonWorking.label : 'Weekly off' }}</strong>
+                  <p class="muted">No punching today. Enjoy your day off.</p>
+                </div>
+              </div>
+            } @else {
+              <div class="hero-row">
+                <div class="clock" [class.running]="state.isOpen()">
+                  <span class="clock-label">{{ state.isOpen() ? 'Punched in · running' : 'Time punched today' }}</span>
+                  <span class="clock-value" aria-live="off">{{ clock() }}</span>
+                  <span class="muted small">
+                    @if (d.summary.status; as st) {
+                      <ph-status-badge [label]="statusOf(st).label" [tone]="statusOf(st).tone" />
+                    } @else {
+                      Not punched in yet
+                    }
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  class="big-switch"
+                  [class.on]="state.isOpen()"
+                  [attr.aria-checked]="state.isOpen()"
+                  [disabled]="state.busy()"
+                  (click)="toggle()"
+                >
+                  <span class="track" aria-hidden="true">
+                    <span class="thumb">
+                      @if (state.busy()) { <mat-spinner diameter="18" /> } @else { <mat-icon>{{ state.isOpen() ? 'logout' : 'login' }}</mat-icon> }
+                    </span>
+                  </span>
+                  <span>{{ state.isOpen() ? 'Punch out' : 'Punch in' }}</span>
+                </button>
+              </div>
+            }
+
+            @if (d.punches.length) {
+              <h3 class="sub">Sessions today ({{ d.punches.length }})</h3>
+              <ol class="sessions">
+                @for (p of d.punches; track p.id; let i = $index) {
+                  <li [class.open]="!p.outAt">
+                    <span class="dot" aria-hidden="true"></span>
+                    <span class="range">
+                      <strong>{{ time(p.inAt) }}</strong>
+                      <mat-icon aria-hidden="true">arrow_forward</mat-icon>
+                      <strong>{{ p.outAt ? time(p.outAt) : 'now' }}</strong>
+                      @if (p.autoClosed) { <span class="auto">auto-closed</span> }
+                    </span>
+                    <span class="dur">{{ p.minutes !== null ? minutes(p.minutes) : running() }}</span>
+                  </li>
+                }
+              </ol>
+
+              <dl class="totals">
+                <div><dt>Punched</dt><dd>{{ total() }}</dd></div>
+                <div><dt>Breaks</dt><dd>{{ minutes(d.summary.breakMinutes) }}</dd></div>
+                <div><dt>Counted hours</dt><dd>{{ d.canPunchOut ? '—' : minutes(d.summary.workedMinutes) }}</dd></div>
+                <div><dt>Late by</dt><dd>{{ d.summary.lateMinutes ? d.summary.lateMinutes + ' min' : 'On time' }}</dd></div>
+                <div><dt>Overtime</dt><dd>{{ d.canPunchOut ? '—' : minutes(d.summary.overtimeMinutes) }}</dd></div>
+              </dl>
+              @if (d.summary.autoBreakMinutes > 0) {
+                <p class="note"><mat-icon aria-hidden="true">info</mat-icon>{{ d.summary.autoBreakMinutes }} min unpaid break deducted: breaks punched today were shorter than the {{ d.shift.standardBreakMinutes }}-minute standard break.</p>
+              }
+            }
+            <p class="hint muted">Punch in and out as many times as you need. Times are recorded by the server in {{ d.timezone }}; location and identity are not verified.</p>
+          }
+        }
+      </ph-state>
+    </section>
+  `,
+  styles: [
+    `
+      .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+      .head .card-title { margin: 0; }
+      .muted { color: var(--ph-text-muted); }
+      .small { font-size: 12px; }
+      .hero-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+      .clock { display: flex; flex-direction: column; gap: 4px; }
+      .clock-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ph-text-subtle); }
+      .running .clock-label { color: var(--ph-success); }
+      .clock-value { font-size: 34px; font-weight: 750; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+      .big-switch { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; gap: 12px; padding: 6px 18px 6px 6px; border-radius: 999px; font-weight: 700; font-size: 15px; color: #fff; background: var(--ph-primary); box-shadow: var(--ph-shadow-md); transition: background-color var(--ph-dur) var(--ph-ease), transform var(--ph-dur-fast) var(--ph-ease); }
+      .big-switch:hover:not(:disabled) { transform: translateY(-1px); }
+      .big-switch:focus-visible { outline: 2px solid var(--ph-primary); outline-offset: 3px; }
+      .big-switch:disabled { cursor: progress; opacity: 0.85; }
+      .big-switch.on { background: var(--ph-danger); }
+      .track { width: 60px; height: 34px; border-radius: 999px; background: rgba(255, 255, 255, 0.28); position: relative; }
+      .thumb { position: absolute; top: 3px; left: 3px; width: 28px; height: 28px; border-radius: 50%; background: #fff; display: grid; place-items: center; color: var(--ph-primary); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); transition: transform var(--ph-dur) var(--ph-ease-spring), color var(--ph-dur); }
+      .on .thumb { transform: translateX(26px); color: var(--ph-danger); }
+      .thumb mat-icon { font-size: 17px; width: 17px; height: 17px; }
+      .sub { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ph-text-subtle); margin: 18px 0 8px; }
+      .sessions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+      .sessions li { display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 10px; animation: ph-fade-up 300ms var(--ph-ease) both; }
+      .sessions li:nth-child(odd) { background: var(--ph-surface-muted); }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ph-border-strong); }
+      .open .dot { background: var(--ph-success); animation: ph-pulse-ring 2s ease-out infinite; }
+      .range { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+      .range mat-icon { font-size: 15px; width: 15px; height: 15px; color: var(--ph-text-subtle); }
+      .auto { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--ph-warning-soft); color: var(--ph-warning); }
+      .dur { font-weight: 650; font-variant-numeric: tabular-nums; }
+      .open .dur { color: var(--ph-success); }
+      .totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin: 14px 0 0; }
+      .totals div { background: var(--ph-surface-muted); border: 1px solid var(--ph-border); border-radius: 10px; padding: 8px 10px; }
+      .totals dt { font-size: 11.5px; color: var(--ph-text-muted); }
+      .totals dd { margin: 2px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .note { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: var(--ph-text-muted); margin: 10px 0 0; }
+      .note mat-icon { font-size: 15px; width: 15px; height: 15px; flex: none; margin-top: 1px; }
+      .off-day { display: flex; gap: 14px; align-items: center; padding: 14px; border-radius: 12px; background: var(--ph-warning-soft); }
+      .off-day p { margin: 2px 0 0; }
+      .off-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--ph-surface); color: var(--ph-warning); }
+      .hint { font-size: 12px; margin: 14px 0 0; }
+    `,
+  ],
+})
+export class TodayAttendanceCard implements OnInit {
+  readonly state = inject(AttendanceState);
+  @Output() changed = new EventEmitter<void>();
+
+  readonly t = this.state.today;
+  readonly formatDate = formatDate;
+  readonly minutes = formatMinutes;
+  readonly clock = computed(() => formatDuration(this.state.liveSeconds(), true));
+  readonly total = computed(() => formatDuration(this.state.liveSeconds()));
+  /** Running time of the open session only. */
+  readonly running = computed(() => {
+    const t = this.t();
+    return t ? formatDuration(this.state.liveSeconds() - t.summary.punchedMinutes * 60) : '';
+  });
+  readonly viewState = computed<'loading' | 'ready' | 'error'>(() =>
+    this.state.error() && !this.t() ? 'error' : !this.t() ? 'loading' : 'ready',
+  );
+
+  ngOnInit() {
+    void this.state.load(Boolean(this.t()));
+  }
+
+  async toggle() {
+    if (await this.state.toggle()) this.changed.emit();
+  }
+
+  statusOf(s: string) {
+    return STATUS[s] ?? { label: s, tone: 'neutral' as Tone };
+  }
+
+  time(iso: string) {
+    const tz = this.t()?.timezone ?? 'Asia/Kolkata';
+    return new Intl.DateTimeFormat('en-IN', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(iso));
+  }
+}

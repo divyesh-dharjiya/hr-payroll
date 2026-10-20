@@ -1,0 +1,16 @@
+# Local development artifacts
+node_modules/
+dist/
+build/
+.angular/
+.pgdata/
+.env
+*.log
+.DS_Store
+Thumbs.db
+client/dist/
+server/dist/
+server/uploads/
+
+.pgdata*/
+server/.pgdata/

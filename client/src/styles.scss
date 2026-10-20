@@ -1,0 +1,479 @@
+@use '@angular/material' as mat;
+
+// Fonts (Inter, Material Symbols) are self-hosted via angular.json styles: no third-party requests.
+
+// ---------------------------------------------------------------------------------------------------------------
+// Material 3 theme in "color-scheme" mode: Material components follow light or dark from the `color-scheme`
+// property, which the Theme service sets on <html>. The indigo brand primary is applied through tokens below.
+// ---------------------------------------------------------------------------------------------------------------
+html {
+  color-scheme: light;
+  @include mat.theme((
+    color: (primary: mat.$violet-palette, tertiary: mat.$azure-palette, theme-type: color-scheme),
+    typography: (plain-family: 'Inter Variable, Inter, system-ui, sans-serif', brand-family: 'Inter Variable, Inter, system-ui, sans-serif'),
+    density: 0,
+  ));
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+mat-icon,
+.mat-icon {
+  font-family: 'Material Symbols Outlined', sans-serif;
+  font-weight: normal;
+  font-style: normal;
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  direction: ltr;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Design tokens
+// ---------------------------------------------------------------------------------------------------------------
+:root {
+  --mat-sys-primary: #4f46e5;
+  --mat-sys-on-primary: #ffffff;
+
+  --ph-bg: #f4f5fb;
+  --ph-surface: #ffffff;
+  --ph-surface-muted: #f8f9fc;
+  --ph-surface-raised: #ffffff;
+  --ph-border: #e4e7ec;
+  --ph-border-strong: #d0d5dd;
+  --ph-text: #101828;
+  --ph-text-muted: #475467;
+  --ph-text-subtle: #667085;
+
+  --ph-primary: #4f46e5;
+  --ph-primary-strong: #4338ca;
+  --ph-primary-soft: #eef2ff;
+  --ph-primary-ring: rgba(79, 70, 229, 0.28);
+  --ph-accent: #0ea5e9;
+
+  --ph-success: #067647;
+  --ph-success-soft: #ecfdf3;
+  --ph-warning: #b54708;
+  --ph-warning-soft: #fffaeb;
+  --ph-danger: #b42318;
+  --ph-danger-soft: #fef3f2;
+  --ph-info: #175cd3;
+  --ph-info-soft: #eff8ff;
+
+  --ph-radius-sm: 8px;
+  --ph-radius: 14px;
+  --ph-radius-lg: 20px;
+  --ph-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --ph-shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --ph-shadow-md: 0 8px 24px -6px rgba(16, 24, 40, 0.12), 0 2px 6px rgba(16, 24, 40, 0.05);
+  --ph-shadow-lg: 0 24px 48px -12px rgba(16, 24, 40, 0.18);
+
+  --ph-gradient-brand: linear-gradient(135deg, #4f46e5 0%, #6366f1 45%, #0ea5e9 100%);
+  // Gradient for text: lighter in dark mode so headings keep enough contrast.
+  --ph-gradient-text: linear-gradient(135deg, #4338ca 0%, #4f46e5 45%, #0284c7 100%);
+  --ph-gradient-soft: linear-gradient(135deg, rgba(79, 70, 229, 0.08), rgba(14, 165, 233, 0.06));
+
+  --ph-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ph-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ph-dur-fast: 140ms;
+  --ph-dur: 240ms;
+  --ph-dur-slow: 480ms;
+}
+
+html[data-theme='dark'] {
+  --mat-sys-primary: #818cf8;
+  --mat-sys-on-primary: #0b0d1a;
+
+  --ph-bg: #0b0d14;
+  --ph-surface: #12151f;
+  --ph-surface-muted: #171b27;
+  --ph-surface-raised: #1a1e2b;
+  --ph-border: #262b3a;
+  --ph-border-strong: #343a4d;
+  --ph-text: #eef0f6;
+  --ph-text-muted: #a3aac0;
+  --ph-text-subtle: #8189a3;
+
+  --ph-primary: #818cf8;
+  --ph-primary-strong: #a5b4fc;
+  --ph-primary-soft: rgba(129, 140, 248, 0.14);
+  --ph-primary-ring: rgba(129, 140, 248, 0.35);
+
+  --ph-success: #47cd89;
+  --ph-success-soft: rgba(71, 205, 137, 0.12);
+  --ph-warning: #fdb022;
+  --ph-warning-soft: rgba(253, 176, 34, 0.12);
+  --ph-danger: #f97066;
+  --ph-danger-soft: rgba(249, 112, 102, 0.12);
+  --ph-info: #84caff;
+  --ph-info-soft: rgba(132, 202, 255, 0.12);
+
+  --ph-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ph-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --ph-shadow-md: 0 8px 24px -6px rgba(0, 0, 0, 0.55);
+  --ph-shadow-lg: 0 24px 48px -12px rgba(0, 0, 0, 0.6);
+  --ph-gradient-soft: linear-gradient(135deg, rgba(129, 140, 248, 0.12), rgba(14, 165, 233, 0.08));
+  --ph-gradient-text: linear-gradient(135deg, #a5b4fc 0%, #c7d2fe 45%, #7dd3fc 100%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ph-bg);
+  color: var(--ph-text);
+  font-family: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color var(--ph-dur) var(--ph-ease), color var(--ph-dur) var(--ph-ease);
+}
+
+a {
+  color: var(--ph-primary);
+}
+
+::selection {
+  background: var(--ph-primary-ring);
+}
+
+// Visible keyboard focus everywhere (WCAG 2.4.7).
+:focus-visible {
+  outline: 2px solid var(--ph-primary);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -48px;
+  z-index: 1000;
+  background: var(--ph-primary);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  &:focus {
+    top: 12px;
+  }
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Page scaffolding
+// ---------------------------------------------------------------------------------------------------------------
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 28px 28px 48px;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+
+  h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+  }
+  p {
+    margin: 6px 0 0;
+    color: var(--ph-text-muted);
+  }
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ph-primary);
+}
+
+.card {
+  background: var(--ph-surface);
+  border: 1px solid var(--ph-border);
+  border-radius: var(--ph-radius);
+  box-shadow: var(--ph-shadow);
+  padding: 20px;
+  transition: box-shadow var(--ph-dur) var(--ph-ease), transform var(--ph-dur) var(--ph-ease), border-color var(--ph-dur) var(--ph-ease);
+}
+
+.card.interactive:hover {
+  box-shadow: var(--ph-shadow-md);
+  transform: translateY(-2px);
+  border-color: var(--ph-border-strong);
+}
+
+.card-title {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+}
+.grid-kpi {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+.grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+}
+.grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: var(--ph-text-muted);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+// Status badges: text plus colour, never colour alone.
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--ph-surface-muted);
+  color: var(--ph-text-muted);
+  border: 1px solid var(--ph-border);
+
+  &::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.8;
+  }
+  &.ok { background: var(--ph-success-soft); color: var(--ph-success); border-color: transparent; }
+  &.warn { background: var(--ph-warning-soft); color: var(--ph-warning); border-color: transparent; }
+  &.bad { background: var(--ph-danger-soft); color: var(--ph-danger); border-color: transparent; }
+  &.info { background: var(--ph-primary-soft); color: var(--ph-primary); border-color: transparent; }
+}
+
+// Responsive tables: horizontal scroll on narrow screens instead of breaking layout.
+.table-wrap {
+  overflow-x: auto;
+  border-radius: var(--ph-radius);
+  border: 1px solid var(--ph-border);
+  background: var(--ph-surface);
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+
+  th,
+  td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ph-border);
+    text-align: left;
+    vertical-align: middle;
+  }
+  th {
+    background: var(--ph-surface-muted);
+    color: var(--ph-text-subtle);
+    font-size: 11.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    position: sticky;
+    top: 0;
+  }
+  tbody tr {
+    transition: background-color var(--ph-dur-fast) var(--ph-ease);
+  }
+  tbody tr:hover {
+    background: var(--ph-primary-soft);
+  }
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+.field-error {
+  color: var(--ph-danger);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.form-grid {
+  display: grid;
+  gap: 4px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+mat-form-field {
+  width: 100%;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Motion. Every animation is decorative and switched off under prefers-reduced-motion.
+// ---------------------------------------------------------------------------------------------------------------
+@keyframes ph-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ph-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ph-scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ph-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes ph-pulse-ring {
+  0% { box-shadow: 0 0 0 0 var(--ph-primary-ring); }
+  70% { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes ph-grow-y {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+@keyframes ph-grow-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+.animate-in {
+  animation: ph-fade-up var(--ph-dur-slow) var(--ph-ease) both;
+}
+
+// Children of .stagger fade up one after another.
+.stagger > * {
+  animation: ph-fade-up var(--ph-dur-slow) var(--ph-ease) both;
+}
+@for $i from 1 through 12 {
+  .stagger > *:nth-child(#{$i}) {
+    animation-delay: #{($i - 1) * 50}ms;
+  }
+}
+
+// The notifications panel is wider than Material's default 280px menu.
+.mat-mdc-menu-panel.ph-notifications-menu {
+  max-width: none !important;
+  overflow-x: hidden;
+}
+
+// Dialog polish
+.mat-mdc-dialog-surface {
+  border-radius: var(--ph-radius-lg) !important;
+}
+.cdk-overlay-backdrop.cdk-overlay-backdrop-showing {
+  backdrop-filter: blur(3px);
+}
+
+// Print: only the document content (payslips, reports).
+@media print {
+  mat-sidenav,
+  .topbar,
+  .no-print {
+    display: none !important;
+  }
+  mat-sidenav-content {
+    margin: 0 !important;
+  }
+  body {
+    background: #fff;
+  }
+  // Paper is always light, even when the screen uses the dark theme.
+  html[data-theme='dark'] {
+    --ph-bg: #ffffff;
+    --ph-surface: #ffffff;
+    --ph-surface-muted: #f8f9fc;
+    --ph-border: #e4e7ec;
+    --ph-text: #101828;
+    --ph-text-muted: #475467;
+    --ph-text-subtle: #667085;
+    --ph-primary: #4f46e5;
+    --ph-primary-soft: #eef2ff;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 18px 16px 40px;
+  }
+  .page-header h1 {
+    font-size: 22px;
+  }
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+  // Two KPI tiles per row on phones keeps the key numbers above the fold.
+  .grid-kpi {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
