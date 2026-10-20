@@ -50,3 +50,43 @@ export function rupeesToPaise(value: string): number {
   const paise = Number(whole) * 100 + Number(frac.padEnd(2, '0'));
   return sign ? -paise : paise;
 }
+
+const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+function belowHundred(n: number): string {
+  return n < 20 ? ONES[n] : `${TENS[Math.floor(n / 10)]}${n % 10 ? `-${ONES[n % 10]}` : ''}`;
+}
+
+function belowThousand(n: number): string {
+  const hundreds = Math.floor(n / 100);
+  const rest = n % 100;
+  return [hundreds ? `${ONES[hundreds]} Hundred` : '', rest ? belowHundred(rest) : ''].filter(Boolean).join(' ');
+}
+
+/** Whole rupees in words with Indian grouping (crore, lakh, thousand), e.g. 150000 -> "One Lakh Fifty Thousand". */
+function integerInWords(n: number): string {
+  if (n === 0) return 'Zero';
+  const crore = Math.floor(n / 10_000_000);
+  const lakh = Math.floor((n % 10_000_000) / 100_000);
+  const thousand = Math.floor((n % 100_000) / 1000);
+  const rest = n % 1000;
+  return [
+    crore ? `${integerInWords(crore)} Crore` : '',
+    lakh ? `${belowHundred(lakh)} Lakh` : '',
+    thousand ? `${belowHundred(thousand)} Thousand` : '',
+    rest ? belowThousand(rest) : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/** Amount in words as printed on payslips: 12345650 paise -> "Rupees One Lakh Twenty-Three Thousand ... and Fifty Paise Only". */
+export function rupeesInWords(paise: number): string {
+  const negative = paise < 0;
+  const abs = Math.abs(paise);
+  const rupees = Math.floor(abs / 100);
+  const p = abs % 100;
+  const words = `Rupees ${integerInWords(rupees)}${p ? ` and ${belowHundred(p)} Paise` : ''} Only`;
+  return negative ? `Minus ${words}` : words;
+}

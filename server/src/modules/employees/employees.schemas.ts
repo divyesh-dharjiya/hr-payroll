@@ -28,7 +28,9 @@ const baseEmployeeFields = {
   workEmail: z.string().trim().toLowerCase().email('Enter a valid work email.').max(160),
   personalEmail: z.string().trim().toLowerCase().email('Enter a valid personal email.').optional().or(z.literal('').transform(() => undefined)),
   phone,
-  dateOfBirth: isoDate.optional(),
+  dateOfBirth: isoDate
+    .refine((v) => v >= '1900-01-01' && v < new Date().toISOString().slice(0, 10), 'Enter a date of birth in the past.')
+    .optional(),
   joiningDate: isoDate,
   employmentType: employmentTypeSchema.default('FULL_TIME'),
   workLocation: z.string().trim().min(1).max(100).default('Head Office'),

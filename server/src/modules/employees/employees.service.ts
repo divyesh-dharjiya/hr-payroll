@@ -10,7 +10,9 @@ import { env } from '../../config/env';
 import { hasPermission } from '../../security/permissions';
 import type { AuthContext } from '../../middleware/auth';
 import { rupeesToPaise } from '../../lib/money';
-import { dateOnly, ymdOf } from '../../lib/time';
+import { dateOnly, todayIn, ymdOf } from '../../lib/time';
+import { toCsv } from '../../lib/csv';
+import { createsReportingCycle, exitStatusFor, nextEmployeeCodeFrom } from './employees.rules';
 import * as S from './employees.schemas';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -127,11 +129,12 @@ export async function getEmployee(auth: AuthContext, id: string) {
   if (!emp) throw AppError.notFound('Employee not found.');
 
   const canSeePay = hasPermission(auth.role, 'payroll:read');
+  // The salary in effect today; a revision dated in the future is not "current" yet (it shows in the history).
+  const org = await prisma.organization.findUniqueOrThrow({ where: { id: auth.organizationId }, select: { timezone: true } });
+  const today = dateOnly(todayIn(org.timezone));
   const salary = canSeePay
-    ? await prisma.salaryAssignment.findFirst({
-        where: { employeeId: id },
-        orderBy: { effectiveFrom: 'desc' },
-      })
+    ? ((await prisma.salaryAssignment.findFirst({ where: { employeeId: id, effectiveFrom: { lte: today } }, orderBy: { effectiveFrom: 'desc' } })) ??
+      (await prisma.salaryAssignment.findFirst({ where: { employeeId: id }, orderBy: { effectiveFrom: 'asc' } })))
     : null;
 
   const { user, reports, bankAccountLast4, panLast4, ...rest } = emp;
@@ -215,8 +218,29 @@ async function assertReferences(orgId: string, departmentId: string, designation
 }
 
 async function nextEmployeeCode(orgId: string): Promise<string> {
-  const count = await prisma.employee.count({ where: { organizationId: orgId } });
-  return `EMP-${String(count + 1).padStart(4, '0')}`;
+  const rows = await prisma.employee.findMany({ where: { organizationId: orgId }, select: { employeeCode: true } });
+  return nextEmployeeCodeFrom(rows.map((r) => r.employeeCode));
+}
+
+/** Sign-in emails are unique across the whole system, not only within an employee directory. */
+async function assertLoginEmailFree(email: string, exceptUserId?: string) {
+  const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+  if (user && user.id !== exceptUserId) {
+    throw AppError.conflict('This email is already used by a sign-in account.', [{ field: 'workEmail', message: 'Already used by a sign-in account.' }]);
+  }
+}
+
+/** Rejects a manager change that would make the reporting line loop back to this employee. */
+async function assertNoReportingCycle(orgId: string, employeeId: string, managerId: string | null | undefined) {
+  if (!managerId) return;
+  if (managerId === employeeId) throw AppError.badRequest('An employee cannot report to themselves.', [{ field: 'managerId', message: 'Choose someone else.' }]);
+  const rows = await prisma.employee.findMany({ where: { organizationId: orgId }, select: { id: true, managerId: true } });
+  const managerOf = new Map(rows.map((r) => [r.id, r.managerId]));
+  if (createsReportingCycle(employeeId, managerId, (id) => managerOf.get(id))) {
+    throw AppError.badRequest('This manager already reports to this employee, directly or indirectly.', [
+      { field: 'managerId', message: 'This would create a reporting loop.' },
+    ]);
+  }
 }
 
 export async function createEmployee(auth: AuthContext, input: S.CreateEmployeeInput, req?: Request) {
@@ -224,6 +248,7 @@ export async function createEmployee(auth: AuthContext, input: S.CreateEmployeeI
   await assertReferences(orgId, input.departmentId, input.designationId, input.managerId);
   const employeeCode = input.employeeCode ?? (await nextEmployeeCode(orgId));
   await assertUniqueFields(orgId, { workEmail: input.workEmail, employeeCode });
+  if (input.createAccount) await assertLoginEmailFree(input.workEmail);
 
   const { createAccount, accountRole, employeeCode: _ignored, ...fields } = input;
   const emp = await prisma.employee.create({
@@ -289,7 +314,7 @@ export async function createEmployee(auth: AuthContext, input: S.CreateEmployeeI
 }
 
 export async function updateEmployee(auth: AuthContext, id: string, input: S.UpdateEmployeeInput, req?: Request) {
-  const existing = await prisma.employee.findFirst({ where: { id, organizationId: auth.organizationId } });
+  const existing = await prisma.employee.findFirst({ where: { id, organizationId: auth.organizationId }, include: { user: { select: { id: true } } } });
   if (!existing) throw AppError.notFound('Employee not found.');
   if (existing.status === 'EXITED' && input.status) {
     throw AppError.invalidState('Exited employees cannot be reactivated from this screen.');
@@ -302,9 +327,15 @@ export async function updateEmployee(auth: AuthContext, id: string, input: S.Upd
       input.managerId,
     );
   }
-  if (input.managerId === id) throw AppError.badRequest('An employee cannot report to themselves.');
-  if (input.workEmail && input.workEmail !== existing.workEmail) {
+  await assertNoReportingCycle(auth.organizationId, id, input.managerId);
+  const emailChanged = Boolean(input.workEmail && input.workEmail !== existing.workEmail);
+  if (emailChanged) {
     await assertUniqueFields(auth.organizationId, { workEmail: input.workEmail }, id);
+    if (existing.user) await assertLoginEmailFree(input.workEmail!, existing.user.id);
+  }
+  const joining = input.joiningDate ?? ymdOf(existing.joiningDate);
+  if (existing.exitDate && ymdOf(existing.exitDate) < joining) {
+    throw AppError.badRequest('The joining date must be before the exit date.', [{ field: 'joiningDate', message: 'Must be before the exit date.' }]);
   }
 
   // Prisma ignores undefined values, so only fields present in the request are written.
@@ -316,7 +347,15 @@ export async function updateEmployee(auth: AuthContext, id: string, input: S.Upd
   };
 
   const before = snapshotForAudit(existing);
-  const updated = await prisma.employee.update({ where: { id }, data });
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.employee.update({ where: { id }, data });
+    // The sign-in email follows the work email, so the person keeps signing in with the address HR shows.
+    if (emailChanged && existing.user) await tx.user.update({ where: { id: existing.user.id }, data: { email: row.workEmail } });
+    if (input.firstName || input.lastName) {
+      if (existing.user) await tx.user.update({ where: { id: existing.user.id }, data: { name: `${row.firstName} ${row.lastName}` } });
+    }
+    return row;
+  });
   const changed = changedFields(before, snapshotForAudit(updated));
   if (changed.length) {
     await writeAudit(auth, auth.organizationId, { action: 'employee.updated', entityType: 'Employee', entityId: id, summary: { changedFields: changed } }, req);
@@ -360,19 +399,52 @@ export async function offboardEmployee(auth: AuthContext, id: string, input: { e
   const emp = await prisma.employee.findFirst({ where: { id, organizationId: auth.organizationId }, include: { user: true } });
   if (!emp) throw AppError.notFound('Employee not found.');
   if (emp.status === 'EXITED') throw AppError.invalidState('This employee has already been offboarded.');
+  if (auth.employeeId === id) throw AppError.forbidden('You cannot offboard yourself. Ask another HR administrator.');
+  if (input.exitDate < ymdOf(emp.joiningDate)) {
+    throw AppError.badRequest('The exit date cannot be before the joining date.', [{ field: 'exitDate', message: 'Must be on or after the joining date.' }]);
+  }
+  const org = await prisma.organization.findUniqueOrThrow({ where: { id: auth.organizationId }, select: { timezone: true } });
+  const status = exitStatusFor(input.exitDate, todayIn(org.timezone));
   await prisma.$transaction(async (tx) => {
     await tx.employee.update({
       where: { id },
-      data: { status: 'EXITED', exitDate: dateOnly(input.exitDate), onboardingStatus: 'COMPLETE' },
+      data: { status, exitDate: dateOnly(input.exitDate), ...(status === 'EXITED' ? { onboardingStatus: 'COMPLETE' } : {}) },
     });
-    if (emp.user) {
-      // Deactivate sign-in and revoke active sessions.
-      await tx.user.update({ where: { id: emp.user.id }, data: { isActive: false, tokenVersion: { increment: 1 } } });
-    }
-    await tx.employee.updateMany({ where: { managerId: id }, data: { managerId: null } });
+    if (status === 'EXITED') await closeAccess(tx, id, emp.user?.id ?? null);
   });
-  await writeAudit(auth, auth.organizationId, { action: 'employee.offboarded', entityType: 'Employee', entityId: id, summary: { exitDate: input.exitDate, reason: input.reason } }, req);
-  return { id };
+  await writeAudit(auth, auth.organizationId, { action: 'employee.offboarded', entityType: 'Employee', entityId: id, summary: { exitDate: input.exitDate, reason: input.reason, status } }, req);
+  return { id, status };
+}
+
+/** Deactivates sign-in, revokes sessions and releases direct reports once someone has left. */
+async function closeAccess(tx: Prisma.TransactionClient, employeeId: string, userId: string | null) {
+  if (userId) await tx.user.update({ where: { id: userId }, data: { isActive: false, tokenVersion: { increment: 1 } } });
+  await tx.employee.updateMany({ where: { managerId: employeeId }, data: { managerId: null } });
+}
+
+/**
+ * Moves employees on notice to EXITED once their exit date has passed. Runs at startup and every hour, and is
+ * idempotent, so a missed run is caught up by the next one.
+ */
+export async function completeDueExits(now = new Date()): Promise<number> {
+  const orgs = await prisma.organization.findMany({ select: { id: true, timezone: true } });
+  let done = 0;
+  for (const org of orgs) {
+    const today = todayIn(org.timezone, now);
+    const due = await prisma.employee.findMany({
+      where: { organizationId: org.id, status: 'ON_NOTICE', exitDate: { lt: dateOnly(today) } },
+      select: { id: true, user: { select: { id: true } } },
+    });
+    for (const e of due) {
+      await prisma.$transaction(async (tx) => {
+        const claimed = await tx.employee.updateMany({ where: { id: e.id, status: 'ON_NOTICE' }, data: { status: 'EXITED', onboardingStatus: 'COMPLETE' } });
+        if (claimed.count) await closeAccess(tx, e.id, e.user?.id ?? null);
+      });
+      await writeAudit(null, org.id, { action: 'employee.exit_completed', entityType: 'Employee', entityId: e.id });
+      done++;
+    }
+  }
+  return done;
 }
 
 export async function addSalaryAssignment(auth: AuthContext, id: string, input: S.SalaryInputDto, req?: Request) {
@@ -491,13 +563,15 @@ export async function importEmployees(auth: AuthContext, rows: unknown[], commit
 
   let created = 0;
   await prisma.$transaction(async (tx) => {
-    let count = await tx.employee.count({ where: { organizationId: orgId } });
+    // Generated codes continue after the highest code in use, including codes given in this file.
+    const codesInUse = new Set([...takenCodes, ...prepared.flatMap((p) => (p.data.employeeCode ? [p.data.employeeCode] : []))]);
     for (const { data } of prepared) {
-      count += 1;
+      const employeeCode = data.employeeCode ?? nextEmployeeCodeFrom(codesInUse);
+      codesInUse.add(employeeCode);
       await tx.employee.create({
         data: {
           organizationId: orgId,
-          employeeCode: data.employeeCode ?? `EMP-${String(count).padStart(4, '0')}`,
+          employeeCode,
           firstName: data.firstName,
           lastName: data.lastName,
           workEmail: data.workEmail,
@@ -531,8 +605,6 @@ export async function exportEmployeesCsv(auth: AuthContext, q: S.ListQuery, req?
   });
   await writeAudit(auth, auth.organizationId, { action: 'employee.exported', entityType: 'Employee', summary: { count: rows.length } }, req);
   // Bank and PAN are intentionally excluded from every export.
-  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const header = ['Employee Code', 'First Name', 'Last Name', 'Work Email', 'Phone', 'Status', 'Employment Type', 'Joining Date', 'Department', 'Designation', 'Location'];
-  const lines = rows.map((r) => [r.employeeCode, r.firstName, r.lastName, r.workEmail, r.phone, r.status, r.employmentType, ymdOf(r.joiningDate), r.department.name, r.designation.title, r.workLocation].map(esc).join(','));
-  return [header.map(esc).join(','), ...lines].join('\n');
+  return toCsv(header, rows.map((r) => [r.employeeCode, r.firstName, r.lastName, r.workEmail, r.phone, r.status, r.employmentType, ymdOf(r.joiningDate), r.department.name, r.designation.title, r.workLocation]));
 }

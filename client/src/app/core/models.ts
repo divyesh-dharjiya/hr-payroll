@@ -25,6 +25,7 @@ export interface SessionUser {
   role: Role;
   employeeId: string | null;
   organizationId: string;
+  organizationName: string;
   photoUrl: string | null;
   title: string | null;
   permissions: Permission[];

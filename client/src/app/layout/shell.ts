@@ -102,7 +102,7 @@ const NAV: NavGroup[] = [
           </span>
           <span>
             <span class="brand-name">PeopleHub</span>
-            <span class="brand-sub">Lotus Technologies</span>
+            <span class="brand-sub">{{ shortOrgName() }}</span>
           </span>
         </a>
 
@@ -252,6 +252,8 @@ export class Shell {
   readonly compact = toSignal(this.breakpoints.observe('(max-width: 1023.98px)').pipe(map((r) => r.matches)), { initialValue: false });
   readonly drawerOpen = signal(false);
   readonly user = this.auth.user;
+  /** Company name without the legal suffix, for the compact sidebar header. */
+  readonly shortOrgName = computed(() => (this.user()?.organizationName ?? '').replace(/\s+(pvt\.?|private)\s+(ltd\.?|limited)\.?$/i, ''));
 
   constructor() {
     // Start closed whenever the layout switches between docked sidebar and drawer.

@@ -76,6 +76,42 @@ export interface PayrollResult {
   exceptions: PayrollException[];
 }
 
+export interface DayForPay {
+  status: string;
+  leave?: { isPaid: boolean; days: number };
+  absentOtherHalf?: boolean;
+}
+
+/**
+ * Unpaid days in a period, in half-day units:
+ *  - absent or not yet / no longer employed: 1
+ *  - half day worked: 0.5, unless approved paid half-day leave covers the other half (then 0)
+ *  - approved leave: unpaid leave counts its days; a past half-day leave with nothing worked adds 0.5
+ *  - present, late, WFH, holidays, weekly offs and future days are paid
+ */
+export function lossOfPayDays(days: DayForPay[]): number {
+  let lop = 0;
+  for (const d of days) {
+    switch (d.status) {
+      case 'ABSENT':
+      case 'NOT_EMPLOYED':
+        lop += 1;
+        break;
+      case 'HALF_DAY':
+        if (!(d.leave && d.leave.days === 0.5)) lop += 0.5;
+        else if (!d.leave.isPaid) lop += 0.5;
+        break;
+      case 'ON_LEAVE':
+        if (d.leave && !d.leave.isPaid) lop += d.leave.days;
+        if (d.absentOtherHalf) lop += 0.5;
+        break;
+      default:
+        break;
+    }
+  }
+  return lop;
+}
+
 export function calculatePayroll(
   salary: SalaryInput,
   attendance: AttendanceInput,

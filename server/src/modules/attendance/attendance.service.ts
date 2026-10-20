@@ -6,7 +6,7 @@ import { writeAudit } from '../../lib/audit';
 import type { AuthContext } from '../../middleware/auth';
 import { employeeScope } from '../employees/employees.service';
 import { dateOnly, eachDay, minutesBetween, todayIn, weekdayOf, ymdOf } from '../../lib/time';
-import { effectiveDayStatus, shiftWindow, summarizeDay, type AttendanceRules } from './attendance.rules';
+import { correctionTimeErrors, effectiveDayStatus, shiftWindow, summarizeDay, type AttendanceRules } from './attendance.rules';
 import { hrUserIds, managerUserIdFor, notifyUsers, userIdForEmployee } from '../../lib/notify';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -255,7 +255,10 @@ export async function checkOut(auth: AuthContext, req?: Request) {
 export interface DailyStatus {
   date: string;
   status: AttendanceStatus | 'NOT_EMPLOYED' | 'FUTURE' | 'ABSENT';
+  /** Approved leave on this day. A half-day leave can sit on a worked day (status HALF_DAY, PRESENT, ...). */
   leave?: { leaveTypeCode: string; isPaid: boolean; days: number };
+  /** Half-day leave on a past day with no attendance at all: the other half was not worked either. */
+  absentOtherHalf?: boolean;
   workedMinutes?: number;
   lateMinutes?: number;
   overtimeMinutes?: number;
@@ -294,10 +297,16 @@ export async function dailyStatusesFor(
   return eachDay(from, to).map((date): DailyStatus => {
     if (date < joining || (exiting && date > exiting)) return { date, status: 'NOT_EMPLOYED' };
     const record = recordByDate.get(date);
+    const leave = leaves.find((l) => date >= ymdOf(l.startDate) && date <= ymdOf(l.endDate));
+    const leaveInfo = leave
+      ? { leaveTypeCode: leave.leaveType.code, isPaid: leave.leaveType.isPaid, days: leave.isHalfDay ? 0.5 : 1 }
+      : undefined;
     if (record) {
       return {
         date,
         status: effectiveDayStatus(record.status, date, record.lateMinutes, rules),
+        // Half-day leave plus a worked half: the leave covers the half that was not worked.
+        ...(leaveInfo?.days === 0.5 ? { leave: leaveInfo } : {}),
         workedMinutes: record.workedMinutes,
         lateMinutes: record.lateMinutes,
         overtimeMinutes: record.overtimeMinutes,
@@ -305,13 +314,8 @@ export async function dailyStatusesFor(
     }
     if (holidaySet.has(date)) return { date, status: 'HOLIDAY' };
     if (rules.weeklyOffDays.includes(weekdayOf(date))) return { date, status: 'WEEKLY_OFF' };
-    const leave = leaves.find((l) => date >= ymdOf(l.startDate) && date <= ymdOf(l.endDate));
-    if (leave) {
-      return {
-        date,
-        status: 'ON_LEAVE',
-        leave: { leaveTypeCode: leave.leaveType.code, isPaid: leave.leaveType.isPaid, days: leave.isHalfDay ? 0.5 : 1 },
-      };
+    if (leaveInfo) {
+      return { date, status: 'ON_LEAVE', leave: leaveInfo, ...(leaveInfo.days === 0.5 && date < today ? { absentOtherHalf: true } : {}) };
     }
     // Today stays pending until the day closes; absence is only inferred for past working days.
     if (date >= today) return { date, status: 'FUTURE' };
@@ -370,6 +374,8 @@ export async function requestCorrection(auth: AuthContext, input: CorrectionInpu
   if (checkIn && checkOut && checkOut <= checkIn) {
     throw AppError.badRequest('Check-out must be after check-in.', [{ field: 'requestedCheckOut', message: 'Check-out must be after check-in.' }]);
   }
+  const timeErrors = correctionTimeErrors(input.workDate, checkIn, checkOut, rules);
+  if (timeErrors.length) throw AppError.badRequest(timeErrors[0].message, timeErrors);
   if (!checkIn || !checkOut) {
     const punches = await prisma.attendancePunch.count({ where: { employeeId, record: { workDate: dateOnly(input.workDate) } } });
     if (punches === 0) {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { writeAudit } from '../../lib/audit';
+import { toCsv } from '../../lib/csv';
 import { dateOnly, eachDay, ymdOf } from '../../lib/time';
 import { requireAuth, requirePermission, type AuthContext } from '../../middleware/auth';
 import { dailyStatusesFor } from '../attendance/attendance.service';
@@ -267,8 +268,7 @@ reportsRouter.get('/overview', requirePermission('reports:read'), async (req, re
   res.json(await buildReport(requireAuth(req), q));
 });
 
-const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-const csv = (header: string[], rows: unknown[][]) => [header.map(esc).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\n');
+const csv = toCsv;
 const rupees = (paise: number) => (paise / 100).toFixed(2);
 
 reportsRouter.get('/export.csv', requirePermission('reports:read'), async (req, res) => {

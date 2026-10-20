@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requirePermission } from '../../middleware/auth';
 import * as svc from './payroll.service';
+import { renderPayslipPdf, type PayslipForPdf } from './payslip.pdf';
 
 export const payrollRouter = Router();
 
@@ -82,6 +83,17 @@ payrollRouter.post('/adjustments', requirePermission('payroll:manage'), async (r
 // Employees see their own payslips; the service enforces scope for everyone else.
 payrollRouter.get('/payslips/mine', async (req, res) => {
   res.json(await svc.listMyPayslips(requireAuth(req)));
+});
+
+// PDF of a finalized payslip, rendered from the same data as the page (same access rules and audit).
+payrollRouter.get('/payslips/:entryId/pdf', async (req, res) => {
+  const slip = await svc.getPayslip(requireAuth(req), req.params.entryId as string, req);
+  const pdf = await renderPayslipPdf(slip as PayslipForPdf);
+  const name = `payslip-${slip.employee.employeeCode}-${slip.period.year}-${String(slip.period.month).padStart(2, '0')}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.send(pdf);
 });
 
 payrollRouter.get('/payslips/:entryId', async (req, res) => {

@@ -1,5 +1,5 @@
 import { AppError } from '../../lib/errors';
-import { minutesBetween, zonedTimeToUtc } from '../../lib/time';
+import { calendarDate, minutesBetween, zonedTimeToUtc } from '../../lib/time';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Attendance rules (pure functions, unit-tested in tests/attendance.rules.test.ts)
@@ -155,6 +155,31 @@ export function summarizeDay(punches: PunchSession[], workDate: string, rules: A
     isHalfDay,
     status: isHalfDay ? 'HALF_DAY' : checkIn.status,
   };
+}
+
+/**
+ * Checks the times in a correction request: each must fall on the work date (in the organization timezone; a
+ * check-out may fall on the next day for an overnight shift) and neither may be in the future.
+ */
+export function correctionTimeErrors(
+  workDate: string,
+  checkIn: Date | null,
+  checkOut: Date | null,
+  rules: AttendanceRules,
+  now: Date = new Date(),
+): { field: string; message: string }[] {
+  const errors: { field: string; message: string }[] = [];
+  const window = shiftWindow(workDate, rules);
+  const outDays = new Set([workDate, calendarDate(window.end, rules.timezone)]);
+  if (checkIn) {
+    if (calendarDate(checkIn, rules.timezone) !== workDate) errors.push({ field: 'requestedCheckIn', message: 'The check-in must be on the selected date.' });
+    else if (checkIn > now) errors.push({ field: 'requestedCheckIn', message: 'The check-in cannot be in the future.' });
+  }
+  if (checkOut) {
+    if (!outDays.has(calendarDate(checkOut, rules.timezone))) errors.push({ field: 'requestedCheckOut', message: 'The check-out must be on the selected date.' });
+    else if (checkOut > now) errors.push({ field: 'requestedCheckOut', message: 'The check-out cannot be in the future.' });
+  }
+  return errors;
 }
 
 /**

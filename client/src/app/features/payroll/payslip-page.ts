@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -7,36 +7,9 @@ import { Api } from '../../core/api';
 import { Auth } from '../../core/auth';
 import { StateView, StatusBadge } from '../../shared/ui';
 import { formatDate, formatPaise, monthName } from '../../shared/format';
+import { type Payslip, payslipPdfUrl } from './payslip.models';
 
-interface MyPayslip {
-  id: string;
-  period: { year: number; month: number };
-  grossPaise: number;
-  deductionsPaise: number;
-  netPaise: number;
-  paymentStatus: 'NOT_PAID' | 'PAID';
-}
-
-interface PayslipLine {
-  code: string;
-  label: string;
-  amountPaise: number;
-}
-interface Payslip {
-  id: string;
-  period: { year: number; month: number };
-  employee: { id: string; employeeCode: string; name: string; department: string; designation: string; joiningDate: string; bankAccount: string | null };
-  paidDays: number;
-  lopDays: number;
-  paymentStatus: 'NOT_PAID' | 'PAID';
-  paidAt: string | null;
-  lines: { earnings: PayslipLine[]; deductions: PayslipLine[]; employerContributions: PayslipLine[] };
-  totals: { grossPaise: number; deductionsPaise: number; netPaise: number; employerContribPaise: number };
-  ytd: { fromMonth: number; gross: number; deductions: number; net: number };
-  finalizedAt: string | null;
-}
-
-/** Printable payslip. Use the browser's print dialog and choose "Save as PDF" to keep a copy. */
+/** One finalized payslip: on screen, printable, and as a server-rendered PDF download. */
 @Component({
   selector: 'ph-payslip-page',
   standalone: true,
@@ -44,16 +17,26 @@ interface Payslip {
   imports: [RouterLink, MatButtonModule, MatIconModule, StateView, StatusBadge],
   template: `
     <div class="page">
-      <nav class="crumbs no-print" aria-label="Breadcrumb"><a routerLink="/payslips">My payslips</a> / <span>Payslip</span></nav>
+      <nav class="crumbs no-print" aria-label="Breadcrumb">
+        @if (isOwn()) {
+          <a routerLink="/payslips">My payslips</a>
+        } @else if (slip(); as s) {
+          <a routerLink="/payroll">Payroll</a> / <a [routerLink]="['/payroll', s.runId]">{{ monthYear() }}</a>
+        } @else {
+          <a routerLink="/payroll">Payroll</a>
+        }
+        / <span>Payslip</span>
+      </nav>
       <ph-state [state]="state()" (retry)="load()" title="Payslip could not be loaded" message="Payslips are visible only to the employee and HR.">
         @if (slip(); as s) {
           <div class="actions no-print">
-            <button mat-flat-button color="primary" type="button" (click)="print()"><mat-icon>print</mat-icon> Print or save as PDF</button>
+            <button mat-stroked-button type="button" (click)="print()"><mat-icon>print</mat-icon> Print</button>
+            <a mat-flat-button color="primary" [href]="pdfUrl(s.id)" download><mat-icon>download</mat-icon> Download PDF</a>
           </div>
           <article class="slip" [attr.aria-label]="'Payslip for ' + monthYear()">
             <header class="slip-head">
               <div>
-                <div class="company">Lotus Technologies Pvt Ltd</div>
+                <div class="company">{{ s.organization.name }}</div>
                 <div class="muted">Payslip for {{ monthYear() }}</div>
               </div>
               <ph-status-badge [label]="s.paymentStatus === 'PAID' ? 'Paid' : 'Payment pending'" [tone]="s.paymentStatus === 'PAID' ? 'ok' : 'neutral'" />
@@ -122,7 +105,7 @@ interface Payslip {
       .crumbs { font-size: 13px; color: var(--ph-text-muted); }
       .crumbs a { color: var(--ph-primary); text-decoration: none; }
       .muted { color: var(--ph-text-muted); }
-      .actions { display: flex; justify-content: flex-end; }
+      .actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
       .slip { background: var(--ph-surface); border: 1px solid var(--ph-border); border-radius: 14px; padding: 28px; display: flex; flex-direction: column; gap: 22px; }
       .slip-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid var(--ph-primary); padding-bottom: 14px; }
       .company { font-size: 20px; font-weight: 700; color: var(--ph-primary); }
@@ -156,6 +139,9 @@ export class PayslipPage implements OnInit {
   readonly formatDate = formatDate;
   readonly state = signal<'loading' | 'ready' | 'error'>('loading');
   readonly slip = signal<Payslip | null>(null);
+  readonly pdfUrl = payslipPdfUrl;
+  /** The signed-in employee looking at their own payslip (HR may open anyone's from a payroll run). */
+  readonly isOwn = computed(() => { const s = this.slip(); return !s || s.employee.id === this.auth.user()?.employeeId; });
 
   ngOnInit() {
     void this.load();
@@ -186,69 +172,3 @@ export class PayslipPage implements OnInit {
     window.print();
   }
 }
-
-@Component({
-  selector: 'ph-my-payslips',
-  standalone: true,
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, MatButtonModule, StateView, StatusBadge],
-  template: `
-    <div class="page">
-      <header class="page-header">
-        <div>
-          <h1>My payslips</h1>
-          <p>Only finalized payroll appears here. Each payslip can be printed or saved as a PDF.</p>
-        </div>
-      </header>
-      <section class="card">
-        <ph-state [state]="state()" (retry)="load()" title="Payslips could not be loaded">
-          <div class="table-wrap">
-            <table class="data">
-              <caption class="sr-only">Finalized payslips</caption>
-              <thead><tr><th scope="col">Period</th><th scope="col" class="num">Gross</th><th scope="col" class="num">Deductions</th><th scope="col" class="num">Net pay</th><th scope="col">Payment</th><th scope="col"><span class="sr-only">Open</span></th></tr></thead>
-              <tbody>
-                @for (p of items(); track p.id) {
-                  <tr>
-                    <td>{{ monthName(p.period.month) }} {{ p.period.year }}</td>
-                    <td class="num">{{ paise(p.grossPaise) }}</td>
-                    <td class="num">{{ paise(p.deductionsPaise) }}</td>
-                    <td class="num"><strong>{{ paise(p.netPaise) }}</strong></td>
-                    <td><ph-status-badge [label]="p.paymentStatus === 'PAID' ? 'Paid' : 'Payment pending'" [tone]="p.paymentStatus === 'PAID' ? 'ok' : 'neutral'" /></td>
-                    <td><a mat-button [routerLink]="['/payslips', p.id]">View</a></td>
-                  </tr>
-                } @empty {
-                  <tr><td colspan="6" class="muted">No finalized payslips yet.</td></tr>
-                }
-              </tbody>
-            </table>
-          </div>
-        </ph-state>
-      </section>
-    </div>
-  `,
-  styles: [`.muted { color: var(--ph-text-muted); } .num { text-align: right; } .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }`],
-})
-export class MyPayslipsPage implements OnInit {
-  private readonly api = inject(Api);
-  private readonly title = inject(Title);
-  readonly paise = formatPaise;
-  readonly monthName = monthName;
-  readonly state = signal<'loading' | 'ready' | 'error'>('loading');
-  readonly items = signal<MyPayslip[]>([]);
-
-  ngOnInit() {
-    this.title.setTitle('My payslips | PeopleHub');
-    void this.load();
-  }
-
-  async load() {
-    this.state.set('loading');
-    try {
-      this.items.set((await this.api.get<{ items: MyPayslip[] }>('/payroll/payslips/mine')).items);
-      this.state.set('ready');
-    } catch {
-      this.state.set('error');
-    }
-  }
-}
-

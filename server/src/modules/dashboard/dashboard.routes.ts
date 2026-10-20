@@ -7,6 +7,7 @@ import { getToday, loadRules } from '../attendance/attendance.service';
 
 export const dashboardRouter = Router();
 
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const PRESENT_STATUSES = ['PRESENT', 'LATE', 'HALF_DAY', 'WFH'] as const;
 
 /** Single entry point: returns the dashboard that matches the caller's role and data scope. */
@@ -102,9 +103,11 @@ async function hrDashboard(orgId: string, today: string, weeklyOffDays: number[]
       where: { organizationId: orgId, status: { not: 'EXITED' } },
       select: { id: true, firstName: true, lastName: true, photoUrl: true, dateOfBirth: true, joiningDate: true, designation: { select: { title: true } } },
     }),
-    prisma.payrollRun.findUnique({
-      where: { organizationId_year_month: { organizationId: orgId, ...period } },
-      select: { status: true, totalGrossPaise: true, totalEmployerPaise: true, totalNetPaise: true },
+    // The most recent run, whatever its status: payroll for a month is usually run after it ends.
+    prisma.payrollRun.findFirst({
+      where: { organizationId: orgId, OR: [{ year: { lt: period.year } }, { year: period.year, month: { lte: period.month } }] },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      select: { year: true, month: true, status: true, totalGrossPaise: true, totalEmployerPaise: true, totalNetPaise: true },
     }),
     prisma.payrollRun.findMany({
       where: { organizationId: orgId, status: 'FINALIZED' },
@@ -123,7 +126,8 @@ async function hrDashboard(orgId: string, today: string, weeklyOffDays: number[]
   const leaveIds = new Set(approvedLeaveToday.map((l) => l.employeeId));
   const isWorkingDay = !holidayToday && !weeklyOffDays.includes(new Date(`${today}T00:00:00Z`).getUTCDay());
   const onLeave = leaveIds.size;
-  const notCheckedIn = isWorkingDay ? Math.max(0, activeCount - present - onLeave) : 0;
+  // Everyone still employed (active or on notice) is expected at work.
+  const notCheckedIn = isWorkingDay ? Math.max(0, totalCount - present - onLeave) : 0;
 
   const events = upcomingEvents(employeesForEvents, today, 30);
 
@@ -146,7 +150,7 @@ async function hrDashboard(orgId: string, today: string, weeklyOffDays: number[]
     },
     today: { date: today, isWorkingDay, holiday: holidayToday?.name ?? null },
     payroll: currentRun
-      ? { period, status: currentRun.status, grossPaise: currentRun.totalGrossPaise, employerPaise: currentRun.totalEmployerPaise, expensePaise: currentRun.totalGrossPaise + currentRun.totalEmployerPaise }
+      ? { period: { year: currentRun.year, month: currentRun.month }, status: currentRun.status, grossPaise: currentRun.totalGrossPaise, employerPaise: currentRun.totalEmployerPaise, expensePaise: currentRun.totalGrossPaise + currentRun.totalEmployerPaise }
       : { period, status: null, grossPaise: 0, employerPaise: 0, expensePaise: 0 },
     departmentDistribution: dept.map((d) => ({ id: d.id, name: d.name, count: d._count.employees })),
     attendanceTrend,
@@ -158,7 +162,7 @@ async function hrDashboard(orgId: string, today: string, weeklyOffDays: number[]
       ...(pendingLeave > 0 ? [{ key: 'leave', label: `${pendingLeave} leave request(s) waiting for decision`, href: '/leave' }] : []),
       ...(pendingCorrections > 0 ? [{ key: 'corrections', label: `${pendingCorrections} attendance correction(s) to review`, href: '/attendance' }] : []),
       ...(missingBank > 0 ? [{ key: 'bank', label: `${missingBank} active employee(s) without bank details`, href: '/employees' }] : []),
-      ...(currentRun && currentRun.status !== 'FINALIZED' ? [{ key: 'payroll', label: `Payroll for this month is ${currentRun.status.toLowerCase()}`, href: '/payroll' }] : []),
+      ...(currentRun && currentRun.status !== 'FINALIZED' ? [{ key: 'payroll', label: `Payroll for ${MONTHS[currentRun.month - 1]} ${currentRun.year} is ${currentRun.status.toLowerCase()}`, href: '/payroll' }] : []),
     ],
     announcements,
   };

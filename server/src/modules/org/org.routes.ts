@@ -16,7 +16,20 @@ const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:mm (24-hour).
 const profileSchema = z.object({
   name: z.string().trim().min(2).max(120),
   legalName: z.string().trim().max(160).nullable().optional(),
-  timezone: z.string().trim().min(3).max(64),
+  // Every date calculation depends on this value, so only real IANA zones (for example Asia/Kolkata) are accepted.
+  timezone: z
+    .string()
+    .trim()
+    .min(3)
+    .max(64)
+    .refine((tz) => {
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'Enter a valid timezone, for example Asia/Kolkata.'),
   weeklyOffDays: z.array(z.number().int().min(0).max(6)).max(7),
   financialYearStartMonth: z.number().int().min(1).max(12),
   shiftStart: hhmm,
@@ -51,6 +64,12 @@ orgRouter.patch('/profile', requirePermission('org:manage'), async (req, res) =>
     throw AppError.forbidden('Only a Super Admin can change the company name, legal name or timezone.');
   }
   const before = await prisma.organization.findUniqueOrThrow({ where: { id: auth.organizationId } });
+  if ((input.shiftStart ?? before.shiftStart) === (input.shiftEnd ?? before.shiftEnd)) {
+    throw AppError.badRequest('The shift must end at a different time than it starts.', [{ field: 'shiftEnd', message: 'Choose a different end time.' }]);
+  }
+  if (input.weeklyOffDays && new Set(input.weeklyOffDays).size === 7) {
+    throw AppError.badRequest('Keep at least one working day in the week.', [{ field: 'weeklyOffDays', message: 'Keep at least one working day.' }]);
+  }
   const after = await prisma.organization.update({ where: { id: auth.organizationId }, data: input });
   const changed = changedFields(
     Object.fromEntries(Object.keys(input).map((k) => [k, (before as Record<string, unknown>)[k]])),

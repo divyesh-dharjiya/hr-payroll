@@ -4,11 +4,12 @@ import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import { writeAudit } from '../../lib/audit';
 import { decryptField } from '../../lib/crypto';
+import { csvRow } from '../../lib/csv';
 import type { AuthContext } from '../../middleware/auth';
 import { dateOnly, monthRange, ymdOf } from '../../lib/time';
 import { dailyStatusesFor } from '../attendance/attendance.service';
 import { employeeScope } from '../employees/employees.service';
-import { calculatePayroll, type PayrollException, type PayrollRules, type SalaryInput } from './payroll.calc';
+import { calculatePayroll, lossOfPayDays, type PayrollException, type PayrollRules, type SalaryInput } from './payroll.calc';
 import { hrUserIds, notifyUsers } from '../../lib/notify';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -163,28 +164,12 @@ async function recalculate(auth: AuthContext, run: { id: string; year: number; m
       continue;
     }
     const days = await dailyStatusesFor(emp.id, from, to, auth.organizationId);
-    let lop = 0;
+    const lop = lossOfPayDays(days);
     let overtimeMinutes = 0;
     const counts: Record<string, number> = {};
     for (const d of days) {
       counts[d.status] = (counts[d.status] ?? 0) + 1;
       overtimeMinutes += d.overtimeMinutes ?? 0;
-      switch (d.status) {
-        case 'ABSENT':
-          lop += 1;
-          break;
-        case 'HALF_DAY':
-          lop += 0.5;
-          break;
-        case 'NOT_EMPLOYED':
-          lop += 1; // not employed on this day: no pay
-          break;
-        case 'ON_LEAVE':
-          if (d.leave && !d.leave.isPaid) lop += d.leave.days;
-          break;
-        default:
-          break; // present, late, WFH, holiday, weekly off and future days are paid
-      }
     }
 
     const adjustments = await prisma.payrollAdjustment.findMany({
@@ -295,7 +280,11 @@ export async function validateRun(auth: AuthContext, id: string, req?: Request) 
     }
   }
   if (blocking.length) {
-    throw AppError.invalidState(`Validation failed with ${blocking.length} blocking exception(s). Fix them and validate again.`);
+    const first = blocking[0];
+    throw AppError.invalidState(
+      `Validation failed with ${blocking.length} blocking exception(s), for example ${first.employeeCode}: ${first.message} Fix them and validate again.`,
+      { blocking },
+    );
   }
   const claimed = await prisma.payrollRun.updateMany({ where: { id, status: 'DRAFT' }, data: { status: 'VALIDATED', validatedAt: new Date() } });
   if (claimed.count === 0) throw AppError.invalidState('This run was changed by someone else. Refresh and try again.');
@@ -389,14 +378,13 @@ export async function bankExportCsv(auth: AuthContext, runId: string, req?: Requ
     include: { employee: { select: { employeeCode: true, firstName: true, lastName: true, bankAccountCipher: true, bankIfsc: true, bankName: true } } },
   });
   await writeAudit(auth, auth.organizationId, { action: 'payroll.bank_export', entityType: 'PayrollRun', entityId: runId, summary: { rows: entries.length } }, req);
-  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const header = ['Employee Code', 'Beneficiary Name', 'Bank Name', 'Account Number', 'IFSC', 'Net Amount (INR)'];
   const lines = entries.map((e) => {
     const amount = (e.netPaise / 100).toFixed(2);
     const account = e.employee.bankAccountCipher ? decryptField(e.employee.bankAccountCipher) : '';
-    return [e.employee.employeeCode, `${e.employee.firstName} ${e.employee.lastName}`, e.employee.bankName, account, e.employee.bankIfsc, amount].map(esc).join(',');
+    return csvRow([e.employee.employeeCode, `${e.employee.firstName} ${e.employee.lastName}`, e.employee.bankName, account, e.employee.bankIfsc, amount]);
   });
-  return [header.map(esc).join(','), ...lines].join('\n');
+  return [csvRow(header), ...lines].join('\n');
 }
 
 // -- Adjustments -------------------------------------------------------------------------------------------------
@@ -464,7 +452,7 @@ export async function getPayslip(auth: AuthContext, entryId: string, req?: Reque
   }
 
   // Year-to-date figures within the financial year, using finalized runs only.
-  const org = await prisma.organization.findUniqueOrThrow({ where: { id: auth.organizationId }, select: { financialYearStartMonth: true } });
+  const org = await prisma.organization.findUniqueOrThrow({ where: { id: auth.organizationId }, select: { financialYearStartMonth: true, name: true, legalName: true } });
   const fyStart = org.financialYearStartMonth;
   const { run } = entry;
   const fyStartYear = run.month >= fyStart ? run.year : run.year - 1;
@@ -486,6 +474,8 @@ export async function getPayslip(auth: AuthContext, entryId: string, req?: Reque
   const snap = entry.snapshot as unknown as { lines: unknown; inputs: unknown; period: unknown; calculatedAt: string };
   return {
     id: entry.id,
+    runId: entry.payrollRunId,
+    organization: { name: org.name, legalName: org.legalName },
     period: { year: run.year, month: run.month },
     employee: {
       id: entry.employeeId,

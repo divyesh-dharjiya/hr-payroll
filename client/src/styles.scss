@@ -1,6 +1,15 @@
 @use '@angular/material' as mat;
 
-// Fonts (Inter, Material Symbols) are self-hosted via angular.json styles: no third-party requests.
+// Fonts are self-hosted: no third-party requests. Inter comes from angular.json styles. Material Symbols is a
+// 12 KB subset with only the icons this app uses (public/fonts, rebuilt by `npm run icons`), instead of the 4 MB
+// full font. It is preloaded in index.html; `block` keeps icon names from flashing as text while it loads.
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/material-symbols-subset.woff2') format('woff2');
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Material 3 theme in "color-scheme" mode: Material components follow light or dark from the `color-scheme`

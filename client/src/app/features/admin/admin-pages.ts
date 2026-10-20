@@ -491,6 +491,7 @@ interface Profile {
   ],
 })
 export class OrganizationPage implements OnInit {
+  private readonly auth = inject(Auth);
   private readonly api = inject(Api);
   private readonly fb = inject(FormBuilder);
   private readonly notify = inject(Notify);
@@ -577,6 +578,8 @@ export class OrganizationPage implements OnInit {
     try {
       await this.api.patch('/org/profile', { ...raw, weeklyOffDays: this.weeklyOffs });
       this.notify.success('Settings saved. Changes apply to new records and runs.');
+      // The company name shows in the sidebar and dashboard, which read it from the session.
+      await this.auth.load(true);
       await this.load();
     } catch (err) {
       if (!applyFieldErrors(this.form, err)) this.notify.error(err instanceof ApiError ? err.message : 'Could not save settings.');

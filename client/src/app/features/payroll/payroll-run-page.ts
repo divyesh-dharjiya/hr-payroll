@@ -13,6 +13,7 @@ import { formatPaise, monthName } from '../../shared/format';
 import { saveFile } from '../employees/employee-list';
 import { ReasonDialogData, CorrectionReviewDialog, type ReviewResult } from '../attendance/correction-review-dialog';
 import { PaymentDialog } from './payroll-page';
+import { payslipPdfUrl } from './payslip.models';
 
 type RunStatus = 'DRAFT' | 'VALIDATED' | 'APPROVED' | 'FINALIZED';
 
@@ -190,7 +191,10 @@ const STEPS: { key: RunStatus; label: string }[] = [
                             </ul>
                           }
                           @if (r.status === 'FINALIZED') {
-                            <a mat-stroked-button [routerLink]="['/payslips', e.id]">View payslip</a>
+                            <div class="slip-links">
+                              <a mat-stroked-button [routerLink]="['/payslips', e.id]">View payslip</a>
+                              <a mat-button [href]="pdfUrl(e.id)" download><mat-icon>download</mat-icon> PDF<span class="sr-only"> payslip for {{ e.employee.name }}</span></a>
+                            </div>
                           }
                         </td>
                       </tr>
@@ -230,6 +234,7 @@ const STEPS: { key: RunStatus; label: string }[] = [
       .breakdown li { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
       .exceptions { margin: 0 0 12px; padding-left: 18px; font-size: 13px; }
       .exceptions .bad { color: var(--ph-danger); }
+      .slip-links { display: flex; gap: 8px; flex-wrap: wrap; }
       @media (max-width: 800px) { .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     `,
   ],
@@ -244,6 +249,7 @@ export class PayrollRunPage implements OnInit {
   private readonly title = inject(Title);
 
   readonly steps = STEPS;
+  readonly pdfUrl = payslipPdfUrl;
   readonly paise = formatPaise;
   readonly state = signal<'loading' | 'ready' | 'error'>('loading');
   readonly run = signal<Run | null>(null);
@@ -264,8 +270,9 @@ export class PayrollRunPage implements OnInit {
     return this.route.snapshot.paramMap.get('id') ?? '';
   }
 
-  async load() {
-    this.state.set('loading');
+  /** A quiet reload keeps the page on screen while fresh data loads (after an action). */
+  async load(quiet = false) {
+    if (!quiet) this.state.set('loading');
     try {
       const r = await this.api.get<Run>(`/payroll/runs/${this.id}`);
       this.run.set(r);
@@ -289,9 +296,10 @@ export class PayrollRunPage implements OnInit {
 
   async act(action: () => Promise<unknown>, success: string) {
     this.busy.set(true);
-    const ok = await this.notify.run(action, success);
+    await this.notify.run(action, success);
     this.busy.set(false);
-    if (ok !== undefined) await this.load();
+    // Reload either way: a failed validation still recalculates entries, and their exceptions show what to fix.
+    await this.load(true);
   }
 
   recalc() {

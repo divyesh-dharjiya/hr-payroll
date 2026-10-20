@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveDayStatus, evaluateCheckIn, evaluateCheckOut, shiftWindow, summarizeDay, type AttendanceRules } from '../src/modules/attendance/attendance.rules';
+import { correctionTimeErrors, effectiveDayStatus, evaluateCheckIn, evaluateCheckOut, shiftWindow, summarizeDay, type AttendanceRules } from '../src/modules/attendance/attendance.rules';
 import { zonedTimeToUtc } from '../src/lib/time';
 
 const rules: AttendanceRules = {
@@ -159,5 +159,28 @@ describe('effective day status', () => {
 
   it('leaves other statuses unchanged', () => {
     expect(effectiveDayStatus('WFH', DAY, 0, rules, ist('10:00'))).toBe('WFH');
+  });
+});
+
+describe('correction times', () => {
+  const now = ist('20:00');
+
+  it('accepts times on the work date that are not in the future', () => {
+    expect(correctionTimeErrors(DAY, ist('09:40'), ist('18:35'), rules, now)).toEqual([]);
+  });
+
+  it('rejects a time on another day', () => {
+    const nextDay = zonedTimeToUtc('2026-10-20', '09:40', 'Asia/Kolkata');
+    expect(correctionTimeErrors(DAY, nextDay, null, rules, now).map((e) => e.field)).toEqual(['requestedCheckIn']);
+  });
+
+  it('rejects a time in the future', () => {
+    expect(correctionTimeErrors(DAY, null, ist('21:00'), rules, now).map((e) => e.field)).toEqual(['requestedCheckOut']);
+  });
+
+  it('allows a next-day check-out for an overnight shift', () => {
+    const night = { ...rules, shiftStart: '22:00', shiftEnd: '06:00' };
+    const out = zonedTimeToUtc('2026-10-20', '06:05', 'Asia/Kolkata');
+    expect(correctionTimeErrors(DAY, ist('22:00'), out, night, new Date(out.getTime() + 3_600_000))).toEqual([]);
   });
 });

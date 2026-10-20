@@ -112,7 +112,7 @@ const TASK_ICONS: Record<string, string> = { leave: 'event_upcoming', correction
                 <ph-stat-card icon="beach_access" tone="info" label="On leave today" [value]="hr().kpis.onLeaveToday" hint="Approved leave" />
                 <ph-stat-card icon="schedule" tone="warn" label="Not checked in" [value]="hr().kpis.absentToday" [hint]="hr().today.holiday ?? (hr().today.isWorkingDay ? 'Working day' : 'Weekly off')" />
                 <ph-stat-card icon="pending_actions" tone="bad" label="Leave awaiting decision" [value]="hr().kpis.pendingLeaveRequests" [hint]="hr().kpis.pendingCorrections + ' correction(s) pending'" />
-                <ph-stat-card icon="payments" label="Payroll cost this month" [value]="hr().payroll.expensePaise" [format]="inr" [hint]="payrollHint()" />
+                <ph-stat-card icon="payments" label="Latest payroll cost" [value]="hr().payroll.expensePaise" [format]="inr" [hint]="payrollHint()" />
               </section>
 
               <div class="grid grid-2 stagger">
@@ -159,7 +159,7 @@ const TASK_ICONS: Record<string, string> = { leave: 'event_upcoming', correction
                       <li><ph-avatar [name]="b.name" [photoUrl]="b.photoUrl" [size]="38" /><span><a [routerLink]="['/employees', b.id]">{{ b.name }}</a><small>{{ b.designation }}</small></span><span class="pill cake"><mat-icon aria-hidden="true">cake</mat-icon>{{ formatDate(b.date) }}</span></li>
                     }
                     @for (a of hr().anniversaries; track a.id + 'a') {
-                      <li><ph-avatar [name]="a.name" [photoUrl]="a.photoUrl" [size]="38" /><span><a [routerLink]="['/employees', a.id]">{{ a.name }}</a><small>{{ a.years }} year{{ a.years > 1 ? 's' : '' }} at Lotus</small></span><span class="pill star"><mat-icon aria-hidden="true">workspace_premium</mat-icon>{{ formatDate(a.date) }}</span></li>
+                      <li><ph-avatar [name]="a.name" [photoUrl]="a.photoUrl" [size]="38" /><span><a [routerLink]="['/employees', a.id]">{{ a.name }}</a><small>{{ a.years }} year{{ a.years > 1 ? 's' : '' }} with us</small></span><span class="pill star"><mat-icon aria-hidden="true">workspace_premium</mat-icon>{{ formatDate(a.date) }}</span></li>
                     }
                     @if (hr().birthdays.length + hr().anniversaries.length === 0) {
                       <li class="muted">No birthdays or work anniversaries coming up.</li>
@@ -429,7 +429,7 @@ export class Dashboard implements OnInit {
   readonly subtitle = computed(() => {
     const d = this.data();
     if (!d) return 'Getting your workspace ready…';
-    if (d.view === 'hr') return `Here's how Lotus Technologies is doing in ${monthName(new Date().getMonth() + 1)}.`;
+    if (d.view === 'hr') return `Here's how ${this.auth.user()?.organizationName || 'your company'} is doing in ${monthName(new Date().getMonth() + 1)}.`;
     if (d.view === 'manager') return 'Your team at a glance, and anything waiting for your decision.';
     return 'Your attendance, leave and pay in one place.';
   });
@@ -457,7 +457,7 @@ export class Dashboard implements OnInit {
 
   readonly payrollHint = computed(() => {
     const p = this.hr().payroll;
-    return p?.status ? `Run is ${p.status.toLowerCase()}` : 'No payroll run yet this month';
+    return p?.status ? `${monthName(p.period.month)} ${p.period.year} · ${p.status.toLowerCase()}` : 'No payroll run yet';
   });
 
   readonly attendanceBars = computed<BarDatum[]>(() =>

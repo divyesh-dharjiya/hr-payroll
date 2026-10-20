@@ -39,8 +39,8 @@ export class AppError extends Error {
   static conflict(message: string, details?: unknown) {
     return new AppError(409, 'CONFLICT', message, details);
   }
-  static invalidState(message: string) {
-    return new AppError(422, 'INVALID_STATE', message);
+  static invalidState(message: string, details?: unknown) {
+    return new AppError(422, 'INVALID_STATE', message, details);
   }
 }
 

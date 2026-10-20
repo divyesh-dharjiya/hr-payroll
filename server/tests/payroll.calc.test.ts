@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { calculatePayroll, type PayrollRules, type SalaryInput } from '../src/modules/payroll/payroll.calc';
-import { applyBps, formatInr, mulDivRound, rupeesToPaise } from '../src/lib/money';
+import { calculatePayroll, lossOfPayDays, type PayrollRules, type SalaryInput } from '../src/modules/payroll/payroll.calc';
+import { applyBps, formatInr, mulDivRound, rupeesInWords, rupeesToPaise } from '../src/lib/money';
 
 const rules: PayrollRules = {
   pfEmployeeRateBps: 1200,
@@ -125,5 +125,36 @@ describe('calculatePayroll', () => {
     );
     expect(r.netPaise).toBeLessThan(0);
     expect(r.exceptions.find((e) => e.code === 'NEGATIVE_NET')?.severity).toBe('error');
+  });
+});
+
+describe('loss of pay days', () => {
+  const paidHalf = { isPaid: true, days: 0.5 };
+  const unpaidHalf = { isPaid: false, days: 0.5 };
+
+  it('counts absent and not-employed days in full and a half day as half', () => {
+    expect(lossOfPayDays([{ status: 'ABSENT' }, { status: 'NOT_EMPLOYED' }, { status: 'HALF_DAY' }, { status: 'PRESENT' }])).toBe(2.5);
+  });
+
+  it('pays a worked half day in full when paid half-day leave covers the other half', () => {
+    expect(lossOfPayDays([{ status: 'HALF_DAY', leave: paidHalf }])).toBe(0);
+    expect(lossOfPayDays([{ status: 'HALF_DAY', leave: unpaidHalf }])).toBe(0.5);
+  });
+
+  it('charges the unworked half of a past half-day leave', () => {
+    expect(lossOfPayDays([{ status: 'ON_LEAVE', leave: paidHalf, absentOtherHalf: true }])).toBe(0.5);
+    expect(lossOfPayDays([{ status: 'ON_LEAVE', leave: unpaidHalf, absentOtherHalf: true }])).toBe(1);
+  });
+
+  it('counts unpaid leave days and pays paid leave', () => {
+    expect(lossOfPayDays([{ status: 'ON_LEAVE', leave: { isPaid: false, days: 1 } }, { status: 'ON_LEAVE', leave: { isPaid: true, days: 1 } }])).toBe(1);
+  });
+});
+
+describe('amount in words', () => {
+  it('uses the Indian numbering system', () => {
+    expect(rupeesInWords(15_000_000)).toBe('Rupees One Lakh Fifty Thousand Only');
+    expect(rupeesInWords(1_234_567_850)).toBe('Rupees One Crore Twenty-Three Lakh Forty-Five Thousand Six Hundred Seventy-Eight and Fifty Paise Only');
+    expect(rupeesInWords(0)).toBe('Rupees Zero Only');
   });
 });

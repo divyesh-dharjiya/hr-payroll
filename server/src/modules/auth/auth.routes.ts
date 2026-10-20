@@ -58,9 +58,12 @@ async function publicUser(user: {
   employeeId: string | null;
   organizationId: string;
 }) {
-  const employee = user.employeeId
-    ? await prisma.employee.findUnique({ where: { id: user.employeeId }, select: { photoUrl: true, designation: { select: { title: true } } } })
-    : null;
+  const [employee, organization] = await Promise.all([
+    user.employeeId
+      ? prisma.employee.findUnique({ where: { id: user.employeeId }, select: { photoUrl: true, designation: { select: { title: true } } } })
+      : null,
+    prisma.organization.findUnique({ where: { id: user.organizationId }, select: { name: true } }),
+  ]);
   return {
     id: user.id,
     email: user.email,
@@ -68,6 +71,7 @@ async function publicUser(user: {
     role: user.role,
     employeeId: user.employeeId,
     organizationId: user.organizationId,
+    organizationName: organization?.name ?? '',
     photoUrl: employee?.photoUrl ?? null,
     title: employee?.designation.title ?? null,
     permissions: permissionsFor(user.role as never),

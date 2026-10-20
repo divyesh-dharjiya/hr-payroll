@@ -92,12 +92,12 @@ export const routes: Routes = [
       {
         path: 'payslips',
         title: 'My payslips | PeopleHub',
-        loadComponent: () => import('./features/payroll/payslip-pages').then((m) => m.MyPayslipsPage),
+        loadComponent: () => import('./features/payroll/my-payslips-page').then((m) => m.MyPayslipsPage),
       },
       {
         path: 'payslips/:id',
         title: 'Payslip | PeopleHub',
-        loadComponent: () => import('./features/payroll/payslip-pages').then((m) => m.PayslipPage),
+        loadComponent: () => import('./features/payroll/payslip-page').then((m) => m.PayslipPage),
       },
       {
         path: 'reports',
