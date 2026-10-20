@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import { writeAudit } from '../../lib/audit';
 import type { AuthContext } from '../../middleware/auth';
-import { employeeScope } from '../employees/employees.service';
+import { employeeScope, teamScope } from '../employees/employees.service';
 import { dateOnly, eachDay, minutesBetween, todayIn, weekdayOf, ymdOf, zonedTimeToUtc } from '../../lib/time';
 import { correctionTimeErrors, effectiveDayStatus, overtimeAfterRecalc, shiftWindow, summarizeDay, type AttendanceRules } from './attendance.rules';
 import { hrUserIds, managerUserIdFor, notifyUsers, userIdForEmployee } from '../../lib/notify';
@@ -467,12 +467,13 @@ async function applyCorrection(
   await persistDay(tx, record.id, rules);
 }
 
-export async function listCorrections(auth: AuthContext, status?: 'PENDING' | 'APPROVED' | 'REJECTED') {
+/** `mine`: the caller's own requests. Otherwise the review queue: the caller's team, without their own requests. */
+export async function listCorrections(auth: AuthContext, status?: 'PENDING' | 'APPROVED' | 'REJECTED', mine = false) {
   const rows = await prisma.attendanceCorrection.findMany({
     where: {
       organizationId: auth.organizationId,
       ...(status ? { status } : {}),
-      employee: employeeScope(auth),
+      employee: mine ? { id: auth.employeeId ?? '__none__' } : { AND: [teamScope(auth), { NOT: { id: auth.employeeId ?? '__none__' } }] },
     },
     orderBy: { createdAt: 'desc' },
     take: 200,
@@ -499,7 +500,7 @@ export async function reviewCorrection(
   req?: Request,
 ) {
   const correction = await prisma.attendanceCorrection.findFirst({
-    where: { id, organizationId: auth.organizationId, employee: employeeScope(auth) },
+    where: { id, organizationId: auth.organizationId, employee: teamScope(auth) },
     include: { employee: { select: { managerId: true } } },
   });
   if (!correction) throw AppError.notFound('Correction request not found.');
@@ -565,7 +566,7 @@ export async function monthlySummary(auth: AuthContext, year: number, month: num
   const from = `${year}-${pad(month)}-01`;
   const to = `${year}-${pad(month)}-${pad(last)}`;
   const employees = await prisma.employee.findMany({
-    where: { AND: [employeeScope(auth), { status: { not: 'EXITED' } }] },
+    where: { AND: [teamScope(auth), { status: { not: 'EXITED' } }] },
     select: { id: true, employeeCode: true, firstName: true, lastName: true },
     orderBy: { firstName: 'asc' },
     take: 500,
@@ -600,7 +601,7 @@ export async function listOvertime(auth: AuthContext, status?: 'PENDING' | 'APPR
     where: {
       organizationId: auth.organizationId,
       overtimeStatus: status ?? { not: 'NONE' },
-      employee: mine ? { id: auth.employeeId ?? '__none__' } : employeeScope(auth),
+      employee: mine ? { id: auth.employeeId ?? '__none__' } : { AND: [teamScope(auth), { NOT: { id: auth.employeeId ?? '__none__' } }] },
     },
     orderBy: [{ workDate: 'desc' }],
     take: 300,
@@ -635,7 +636,7 @@ export async function reviewOvertime(auth: AuthContext, input: OvertimeReviewInp
     throw AppError.badRequest('Approve part of the overtime one day at a time.', [{ field: 'minutes', message: 'Review a single day.' }]);
   }
   const records = await prisma.attendanceRecord.findMany({
-    where: { id: { in: input.ids }, organizationId: auth.organizationId, employee: employeeScope(auth) },
+    where: { id: { in: input.ids }, organizationId: auth.organizationId, employee: teamScope(auth) },
     include: { employee: { select: { firstName: true, lastName: true } } },
   });
   if (records.length !== new Set(input.ids).size) throw AppError.notFound('Overtime entry not found.');

@@ -447,7 +447,8 @@ export async function getPayslip(auth: AuthContext, entryId: string, req?: Reque
     },
   });
   if (!entry) throw AppError.notFound('Payslip not found.');
-  if (auth.role === 'MANAGER') throw AppError.forbidden('Managers cannot view payslips.');
+  // Managers see their own payslips only; payslips of their team stay with HR.
+  if (auth.role === 'MANAGER' && entry.employeeId !== auth.employeeId) throw AppError.notFound('Payslip not found.');
   if (auth.employeeId !== entry.employeeId) {
     await writeAudit(auth, auth.organizationId, { action: 'payroll.payslip_viewed', entityType: 'PayrollEntry', entityId: entryId }, req);
   }

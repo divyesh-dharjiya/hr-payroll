@@ -21,11 +21,23 @@ import * as S from './employees.schemas';
 //   MANAGER                -> direct reports only
 //   EMPLOYEE               -> own record only
 // ---------------------------------------------------------------------------------------------------------------
+// Two scopes:
+//   employeeScope: whose records the caller may SEE, which always includes their own (a manager's own calendar,
+//                  leave, payslips and profile).
+//   teamScope:     whose requests the caller may DECIDE or list as their team: HR everyone, a manager their direct
+//                  reports, an employee nobody. Deciding on your own request is refused separately.
 export function employeeScope(auth: AuthContext): Prisma.EmployeeWhereInput {
   const base: Prisma.EmployeeWhereInput = { organizationId: auth.organizationId };
   if (hasPermission(auth.role, 'employees:read') && auth.role !== 'MANAGER') return base;
-  if (auth.role === 'MANAGER' && auth.employeeId) return { ...base, managerId: auth.employeeId };
+  if (auth.role === 'MANAGER' && auth.employeeId) return { ...base, OR: [{ managerId: auth.employeeId }, { id: auth.employeeId }] };
   if (auth.employeeId) return { ...base, id: auth.employeeId };
+  return { ...base, id: '__none__' };
+}
+
+export function teamScope(auth: AuthContext): Prisma.EmployeeWhereInput {
+  const base: Prisma.EmployeeWhereInput = { organizationId: auth.organizationId };
+  if (auth.role === 'HR_ADMIN' || auth.role === 'SUPER_ADMIN') return base;
+  if (auth.role === 'MANAGER' && auth.employeeId) return { ...base, managerId: auth.employeeId };
   return { ...base, id: '__none__' };
 }
 
@@ -59,7 +71,8 @@ function toSummary(e: EmployeeSummary) {
 }
 
 export async function listEmployees(auth: AuthContext, q: S.ListQuery) {
-  const where: Prisma.EmployeeWhereInput = { AND: [employeeScope(auth)] };
+  // The directory lists the team: everyone for HR, direct reports for a manager.
+  const where: Prisma.EmployeeWhereInput = { AND: [teamScope(auth)] };
   const and = where.AND as Prisma.EmployeeWhereInput[];
   if (q.q) {
     and.push({
@@ -592,7 +605,7 @@ export async function importEmployees(auth: AuthContext, rows: unknown[], commit
 
 export async function exportEmployeesCsv(auth: AuthContext, q: S.ListQuery, req?: Request): Promise<string> {
   const where: Prisma.EmployeeWhereInput = {
-    AND: [employeeScope(auth), ...(q.status ? [{ status: q.status }] : []), ...(q.departmentId ? [{ departmentId: q.departmentId }] : [])],
+    AND: [teamScope(auth), ...(q.status ? [{ status: q.status }] : []), ...(q.departmentId ? [{ departmentId: q.departmentId }] : [])],
   };
   const rows = await prisma.employee.findMany({
     where,

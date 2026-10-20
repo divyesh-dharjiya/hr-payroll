@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { AppError } from '../../lib/errors';
 import { writeAudit } from '../../lib/audit';
 import type { AuthContext } from '../../middleware/auth';
-import { employeeScope } from '../employees/employees.service';
+import { employeeScope, teamScope } from '../employees/employees.service';
 import { dateOnly, todayIn, ymdOf } from '../../lib/time';
 import { loadRules } from '../attendance/attendance.service';
 import { countLeaveDays, leaveBalance, rangesOverlap } from './leave.rules';
@@ -286,7 +286,7 @@ export async function listRequests(auth: AuthContext, status?: string) {
 export async function decideRequest(auth: AuthContext, id: string, decision: 'APPROVE' | 'REJECT', comment: string | undefined, req?: Request) {
   if (auth.role === 'EMPLOYEE') throw AppError.forbidden();
   const request = await prisma.leaveRequest.findFirst({
-    where: { id, organizationId: auth.organizationId, employee: employeeScope(auth) },
+    where: { id, organizationId: auth.organizationId, employee: teamScope(auth) },
     include: { leaveType: true },
   });
   if (!request) throw AppError.notFound('Leave request not found.');
@@ -374,8 +374,9 @@ export async function cancelRequest(auth: AuthContext, id: string, reason: strin
 
 export async function decideCancellation(auth: AuthContext, id: string, decision: 'APPROVE' | 'REJECT', req?: Request) {
   if (auth.role === 'EMPLOYEE') throw AppError.forbidden();
-  const request = await prisma.leaveRequest.findFirst({ where: { id, organizationId: auth.organizationId, employee: employeeScope(auth) } });
+  const request = await prisma.leaveRequest.findFirst({ where: { id, organizationId: auth.organizationId, employee: teamScope(auth) } });
   if (!request) throw AppError.notFound('Leave request not found.');
+  if (request.employeeId === auth.employeeId) throw AppError.forbidden('You cannot decide on your own cancellation.');
   if (request.status !== 'CANCEL_REQUESTED') throw AppError.invalidState('There is no cancellation request for this leave.');
   const next = decision === 'APPROVE' ? 'CANCELLED' : 'APPROVED';
   await prisma.leaveRequest.updateMany({ where: { id, status: 'CANCEL_REQUESTED' }, data: { status: next, deciderId: auth.userId, decidedAt: new Date() } });

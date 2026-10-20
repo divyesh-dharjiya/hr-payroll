@@ -66,7 +66,8 @@ attendanceRouter.post('/corrections', async (req, res) => {
 
 attendanceRouter.get('/corrections', async (req, res) => {
   const status = z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional().parse(req.query.status);
-  res.json({ items: await svc.listCorrections(requireAuth(req), status) });
+  const mine = z.enum(['true', 'false']).optional().parse(req.query.mine) === 'true';
+  res.json({ items: await svc.listCorrections(requireAuth(req), status, mine) });
 });
 
 // Overtime: `mine=true` lists the caller's own claims; otherwise the reviewer's scope (team or company).

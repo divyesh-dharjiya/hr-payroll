@@ -225,3 +225,32 @@ describe('session probe, payslip PDF, overtime and corrections', () => {
     expect(res.json.error.details.map((d: { field: string }) => d.field)).toContain('requestedCheckIn');
   });
 });
+
+describe('a manager is also an employee', () => {
+  it('lets a manager open their own calendar, leave balances, profile and payslip', async () => {
+    const now = new Date();
+    const cal = await call(manager, 'GET', `/api/attendance/calendar?employeeId=${arjunId}&year=${now.getFullYear()}&month=${now.getMonth() + 1}`);
+    expect(cal.status).toBe(200);
+    expect((await call(manager, 'GET', `/api/leave/balances?employeeId=${arjunId}`)).status).toBe(200);
+    expect((await call(manager, 'GET', `/api/employees/${arjunId}`)).status).toBe(200);
+    const slip = await prisma.payrollEntry.findFirstOrThrow({ where: { employeeId: arjunId, run: { status: 'FINALIZED' } } });
+    expect((await call(manager, 'GET', `/api/payroll/payslips/${slip.id}`)).status).toBe(200);
+  });
+
+  it('keeps team payslips away from the manager', async () => {
+    expect((await call(manager, 'GET', `/api/payroll/payslips/${augEntryOfVikram}`)).status).toBe(404);
+  });
+
+  it('lists only direct reports in the manager directory, not the manager', async () => {
+    const res = await call(manager, 'GET', '/api/employees?pageSize=100');
+    expect(res.json.items.some((e: { id: string }) => e.id === arjunId)).toBe(false);
+    expect(res.json.items.some((e: { id: string }) => e.id === vikramId)).toBe(true);
+  });
+
+  it('keeps the manager own requests out of their review queue', async () => {
+    const res = await call(manager, 'GET', '/api/attendance/corrections?status=PENDING');
+    expect(res.status).toBe(200);
+    const mine = await call(manager, 'GET', '/api/attendance/corrections?mine=true');
+    expect(mine.status).toBe(200);
+  });
+});
