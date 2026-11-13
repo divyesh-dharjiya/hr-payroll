@@ -2,18 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "client",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["ng", "serve", "--port", "4200"],
-      "cwd": "client",
+      "name": "peoplehub",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start", "--", "--port", "4200"],
       "port": 4200
-    },
-    {
-      "name": "api",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["node_modules/tsx/dist/cli.mjs", "watch", "src/server.ts"],
-      "cwd": "server",
-      "port": 4000
     }
   ]
 }

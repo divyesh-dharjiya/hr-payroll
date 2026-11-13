@@ -1,86 +1,19 @@
 # PeopleHub: HR, Attendance, Leave and Payroll
 
-PeopleHub is an HR and payroll system for small and medium Indian companies. It is built as a separated **Angular** frontend and an **Express + Prisma + PostgreSQL** API. Every permission is enforced on the server. The frontend only shapes navigation.
+PeopleHub is an HR and payroll app for small and medium Indian companies. It is a single **Angular 20** project: no server, no database to install. Its API runs inside the browser and keeps the data in IndexedDB, so `npm start` is all it takes.
 
 > Demo data only. The seeded company, employees and figures are fictional. Bank and PAN values are synthetic. Payroll rates and tax values must be verified with a qualified professional before real use.
 
-```
-HR Payrol/
-├─ client/   Angular 20 (standalone components, signals, Angular Material), lazy-loaded routes
-├─ server/   Express 5 + TypeScript, Prisma 6, PostgreSQL, Zod validation, RBAC
-└─ .claude/  preview launch configuration (optional)
-```
+## 1. Run it
 
-## 1. Prerequisites
-
-| Tool | Version used | Notes |
-|---|---|---|
-| Node.js | 24.x | npm 11 |
-| PostgreSQL | 14+ (tested with 18) | Use your own install, or Docker (`postgres:16`) |
-
-## 2. Setup (first time)
-
-Run these in order. Replace the placeholder values in `server/.env`.
-
-**Server**
+Requirements: Node.js 20 or newer (tested with Node 24, npm 11).
 
 ```bash
-cd server
 npm install
+npm start          # http://localhost:4200
 ```
 
-Create `server/.env` from the example (PowerShell: `Copy-Item .env.example .env`):
-
-```bash
-cp .env.example .env
-```
-
-Fill in:
-
-- `DATABASE_URL`: your PostgreSQL connection string.
-- `JWT_SECRET`: at least 32 random characters.
-- `DATA_ENCRYPTION_KEY`: 64 hex characters (32 bytes), used to encrypt bank and PAN values.
-- `SEED_DEMO_PASSWORD`: the password for the development demo accounts (10+ characters).
-
-Generate random secrets with:
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-Then create the schema and demo data:
-
-```bash
-npx prisma migrate deploy
-npm run seed
-npm run dev
-```
-
-The API starts on `http://localhost:4000`.
-
-**No PostgreSQL installed?** A local development database can run without a system install:
-
-```bash
-npm run db:dev        # starts PostgreSQL on localhost:5433 (see DEV_PG_PORT)
-```
-
-Set `DATABASE_URL=postgresql://peoplehub:peoplehub_dev_only@localhost:5433/peoplehub?schema=public` for it. This helper is for development only.
-
-**Client**
-
-```bash
-cd client
-npm install
-npm start
-```
-
-Open `http://localhost:4200`. The dev server proxies `/api` to the API, so cookies stay same-origin.
-
-## 3. Demo accounts (development only)
-
-All accounts use the password in `SEED_DEMO_PASSWORD`.
-
-**One-click demo sign-in.** With `DEMO_MODE=true` in `server/.env`, the sign-in page shows a card for each role. Choosing one types that account's email and password into the form and signs in. The password comes from the server at runtime, never from the frontend bundle. The `/api/auth/demo-accounts` endpoint returns 404 unless demo mode is on, and it is always off when `NODE_ENV=production`. Keep `DEMO_MODE=false` anywhere real data exists.
+The first visit builds a demo company in the browser (22 employees, about six months of attendance, four payroll runs). All dates are relative to today, so the data never looks stale. The sign-in page has one-click cards for each role and a **Reset demo data** link.
 
 | Role | Email | What it can do |
 |---|---|---|
@@ -89,149 +22,144 @@ All accounts use the password in `SEED_DEMO_PASSWORD`.
 | Manager | `manager@lotus-demo.example` | Direct reports only: attendance, leave approvals, corrections |
 | Employee | `employee@lotus-demo.example` | Own profile, attendance, leave, payslips |
 
-The sign-in page shows these as quick-fill buttons in development builds only.
+All demo accounts use the password `PeopleHub@2026` (set in `src/app/local-api/db/seed.ts`).
 
-## 3a. What's in the product
+## 2. Scripts
 
-- **Public landing page** at `/`: product overview, workflow, roles, security, and FAQ. It is indexable, with metadata and structured data. Signed-in pages stay `noindex`.
-- **Role dashboards** with animated KPIs, attendance and payroll charts, a department donut, celebrations, tasks and announcements.
-- **Reports** (`/reports`): headcount, joiners and exits, attendance rate, absenteeism by department, late arrivals, overtime, leave use, and payroll cost with component breakdown and reconciliation. Each section has a CSV export, and the page is print-friendly.
-- **Notifications:** in-app bell for leave requests and decisions, correction reviews, payroll approvals, and new payslips.
-- **Quick search** (Ctrl/Cmd + K): jump to pages and find colleagues within your scope.
-- **Profile photos:** HR can upload for anyone, employees for themselves. Images are resized and stripped of metadata in the browser, and checked again on the server.
-- **Light and dark themes** (follows the system by default), animations that respect reduced motion, and responsive layouts from phone to desktop.
+| Command | Purpose |
+|---|---|
+| `npm start` | Development server on http://localhost:4200 |
+| `npm run build` | Production build in `dist/peoplehub/browser` (budgets enforced) |
+| `npm test` | Unit and API tests (Vitest, runs in Node, no browser needed) |
+| `npm run typecheck` | Type-check the app and the tests |
+| `npm run icons` | Rebuild the Material Symbols font subset after adding icons |
 
-## 4. Scripts
+The production build is a static site: upload `dist/peoplehub/browser` to any static host (Netlify, Vercel, GitHub Pages, S3). Configure the host to serve `index.html` for unknown paths, so deep links such as `/payroll` work.
 
-| Location | Command | Purpose |
-|---|---|---|
-| server | `npm run dev` | API with reload |
-| server | `npm run build` / `npm start` | Compile and run production build |
-| server | `npm run seed` | Reset and reseed demo data (refuses in production) |
-| server | `npm test` | Unit tests (payroll, attendance, leave rules) and authorization integration tests |
-| server | `npx prisma migrate dev` | Create a new migration after editing `prisma/schema.prisma` |
-| client | `npm start` | Dev server on port 4200 |
-| client | `npm run build` | Production build (budgets enforced) |
+## 3. Project structure
 
-## 5. Architecture
+```
+HR Payrol/
+├─ src/
+│  ├─ index.html, main.ts, styles.scss
+│  └─ app/
+│     ├─ app.config.ts, app.routes.ts   Providers and lazy-loaded routes
+│     ├─ core/          API client, session state, guards, toasts, theme, local-api interceptor
+│     ├─ layout/        Responsive shell, command palette (Ctrl/Cmd + K), notifications, punch toggle
+│     ├─ shared/        State views, dialogs, badges, SVG charts, avatars, formatters, file download
+│     ├─ features/      One folder per area: landing, auth, dashboard, employees, attendance,
+│     │                 leave, payroll, reports, admin
+│     └─ local-api/     The app's API, running in the browser (see below)
+│        ├─ index.ts    Runtime: routing, sessions, one transaction per request, saving
+│        ├─ http/       Express-style router and permission guards
+│        ├─ db/         Schema (row types), tables, IndexedDB storage, demo seed
+│        ├─ lib/        Time zones, money (integer paise), CSV, hashing, audit log, notifications
+│        ├─ security/   Role-to-permission matrix and sessions
+│        └─ modules/    auth, employees, attendance, leave, payroll, org, reports, dashboard,
+│                       notifications. Each has *.routes.ts, *.service.ts and pure *.rules.ts
+├─ public/              Favicon and the icon font subset
+├─ scripts/             Icon font subsetting
+├─ angular.json, package.json, tsconfig*.json, vitest.config.ts
+└─ README.md
+```
 
-**Server** (`server/src`)
+## 4. How the data works
 
-- `config/`: environment validation (fails fast on missing or weak secrets).
-- `lib/`: errors, Prisma client, money (integer paise, half-up rounding), time zones, field encryption, audit log, mailer boundary.
-- `security/permissions.ts`: the role-to-permission matrix, checked on every route.
-- `middleware/auth.ts`: JWT in an HttpOnly cookie. The user is re-read on every request, and `tokenVersion` revokes sessions on logout and password change.
-- `modules/<feature>/`: `*.rules.ts` (pure business rules), `*.service.ts` (persistence and scope), `*.routes.ts` (validation and HTTP).
+- **Screens call an API, as before.** Components call `/api/...` through Angular's `HttpClient`. The interceptor in `core/local-api.interceptor.ts` answers those calls with `local-api`, loaded on the first request in its own chunk, so the landing page stays small.
+- **Storage.** Tables live in memory and are saved to IndexedDB after every change. Another open tab picks up the change on its next request.
+- **Transactions.** Requests run one at a time, and each runs as a transaction: if a request fails, nothing it changed is kept.
+- **Rules live in the API.** Role permissions and record scope (HR: everyone, Manager: direct reports, Employee: self) are checked on every request, not only in the menus.
+- **Moving to a real server later.** Serve the same endpoints from a backend and remove the interceptor from `app.config.ts`. The screens do not change, and the code in `local-api/modules` maps closely to a server's route, service and rules layers.
 
-**Client** (`client/src/app`)
+## 5. What's in the product
 
-- `core/`: API client with one error shape, session state, guards, notifications. Success toasts appear only after the server confirms.
-- `shared/`: state views (loading, empty, error with retry), confirmation dialogs, status badges, SVG charts, formatters.
-- `layout/`: responsive shell. The sidebar becomes a drawer on handsets.
-- `features/`: one folder per area. Routes are lazy-loaded.
+- **Public landing page** at `/`: product overview, workflow, roles, security and FAQ.
+- **Role dashboards** with KPIs, attendance and payroll charts, a department donut, celebrations, tasks and announcements.
+- **Employees:** directory with search, filters and sorting, profiles, onboarding and offboarding, CSV import (validated before saving) and export, profile photos, salary structures.
+- **Attendance:** punch in and out any number of times a day, monthly calendar, corrections, and overtime approval.
+- **Leave:** casual, sick, earned and unpaid leave with accrual, half days, overlap checks, cancellations and a team calendar.
+- **Payroll:** Draft → Validated → Approved → Finalized, adjustments, payslips (print or PDF), payment recording and a bank transfer file.
+- **Reports** (`/reports`): headcount, joiners and exits, attendance rate, absenteeism, late arrivals, overtime, leave use and payroll cost with reconciliation. Each section exports CSV.
+- **Notifications** for requests, decisions, payroll approvals and new payslips. **Audit log** of sensitive actions.
+- Light and dark themes, reduced-motion support, and layouts from phone to desktop.
 
 ## 6. Security model
 
-- Authentication: bcrypt (cost 12) password hashes, generic login errors, per-IP rate limiting, and a 15-minute lock after 5 failed attempts.
-- Sessions: HttpOnly, SameSite=Lax cookie, 8-hour JWT, revoked by `tokenVersion`.
-- Password reset: random single-use token, stored only as a SHA-256 hash, valid 30 minutes. The response never reveals whether an account exists.
-- Authorization: role permissions plus record scope (HR: all; Manager: direct reports; Employee: self). Out-of-scope records return 404 rather than 403, so their existence isn't leaked.
-- Restricted data: bank account and PAN are AES-256-GCM encrypted at rest and masked by default. Viewing them is an explicit, audited action. Exports and the bank transfer file never include PAN.
-- Audit: sensitive actions are logged with actor, action, record and a redacted change summary. Passwords, tokens and full bank values are never logged.
-- Input: all input is validated with Zod. Errors use one format: `{ "error": { "code", "message", "details?" } }`.
-- CSRF: cookies are SameSite=Lax, state-changing requests must be JSON, and CORS is limited to `CLIENT_ORIGIN`.
-- Headers: Helmet with a restrictive Content-Security-Policy.
+This build keeps every rule of the original server, applied inside the browser:
 
-## 6a. Attendance rules (punch in / punch out)
+- **Passwords** are salted, iterated SHA-256 hashes. Five failed sign-ins lock an account for 15 minutes, and error messages never reveal whether an account exists.
+- **Sessions** last 8 hours. Signing out or resetting a password changes the user's token version, which ends their sessions in every tab.
+- **Password reset** uses a random single-use token stored only as a hash, valid for 30 minutes. There is no mail server, so reset and welcome links are printed to the browser console (`lib/mailer.ts` is the place to plug in a mail API).
+- **Restricted data:** bank account and PAN numbers are masked in every view. Revealing them is a separate, audited request, and exports never include PAN.
+- **Audit trail:** sensitive actions are logged with the actor, action, record and a redacted change summary.
 
-- **Toggle in the header.** One switch punches in or out. A day can have any number of sessions. The header shows a live total for the day.
+Know the limits: all data sits in the browser's storage, so anyone with access to that browser profile can read it. This is right for a demo, a prototype or a single-device deployment. A multi-user production deployment needs a server and database (see section 4).
+
+## 7. Attendance rules
+
+- **Toggle in the header.** One switch punches in or out. A day can have any number of sessions, and the header shows a live total.
 - **Total hours** are the sum of all sessions. Gaps between sessions count as breaks.
-- **Unpaid break.** If a day spans more than `breakDeductionAfterMinutes` but the punched breaks are shorter than `standardBreakMinutes`, the shortfall is deducted. Someone who never punches out for lunch is treated the same as someone who does. The card says when this happens.
+- **Unpaid break.** If a day spans more than `breakDeductionAfterMinutes` but the punched breaks are shorter than `standardBreakMinutes`, the shortfall is deducted.
 - **Late, overtime, half day.** Late is measured from the first punch-in. Overtime is counted hours beyond the scheduled shift. A day is a half day when counted hours are under half the shift, judged only after the shift has ended.
-- **Holidays and weekly offs.** The toggle is replaced by a label, and the server rejects punch-ins on those days. An already open session can still be closed.
-- **Safeguards.**
-  - A second punch within 60 seconds is rejected as a double tap.
-  - A database index allows only one open session per employee.
-  - A session left open for more than 16 hours is closed automatically at that day's shift end and marked "auto-closed". The employee can then request a correction.
-- **Corrections.** With both times, the day is replaced by one session. With one time, the first punch-in or last punch-out is adjusted.
+- **Holidays and weekly offs.** Punching in is not offered on those days; an open session can still be closed.
+- **Safeguards.** A second punch within 60 seconds is rejected as a double tap. Only one session can be open at a time. A session left open for more than 16 hours is closed at that day's shift end and marked "auto-closed".
+- **Corrections.** With both times, the day is replaced by one session. With one time, the first punch-in or last punch-out moves.
+- **Overtime** of 30 minutes or more becomes a claim. A manager or HR approves all or part of it, or rejects it; payroll pays approved minutes only.
 
-## 7. Payroll rules
+## 8. Payroll rules
 
 - Money is stored as integer paise. Percentages use basis points with BigInt intermediates and half-up rounding.
 - Workflow: **Draft → Validated → Approved → Finalized**. The creator cannot approve or finalize their own run.
-- Finalization is a conditional database update, so it cannot run twice. Each entry keeps a snapshot of its inputs and results.
-- Payment is tracked separately. Finalizing a run does not mean the salary was paid. Payment is recorded per employee with a bank reference.
-- Loss of pay: absent and unpaid-leave days, half days, and days before joining or after exit. Working-day counting excludes weekly offs and holidays.
-- PF, ESI, professional tax and TDS are explicit per-employee or per-organization settings. No statutory slabs are hardcoded. The engine records the rule used on each payslip.
+- Each entry keeps a snapshot of its inputs and results. Finalizing does not mean salary was paid: payment is recorded per employee with a bank reference.
+- Loss of pay: absent and unpaid-leave days, half days, and days before joining or after exit. Working days exclude weekly offs and holidays.
+- PF, ESI, professional tax and TDS are explicit per-employee or per-organization settings. No statutory slabs are hardcoded.
 
-Rules that need professional verification before real use: PF wage ceiling handling (EPS/EDLI split not modelled), ESI eligibility, professional tax by state, TDS, and overtime pay.
+Rules that need professional verification before real use: PF wage ceiling handling (EPS/EDLI split not modelled), ESI eligibility, professional tax by state, TDS and overtime pay.
 
-## 8. API overview
+## 9. API overview
 
-All endpoints are under `/api`. Responses are JSON. Errors follow the format in section 6.
+All endpoints are under `/api` and answered in the browser by `src/app/local-api`. Errors use one format: `{ "error": { "code", "message", "details?" } }`.
 
-| Area | Method and path | Permission |
+| Area | Endpoints | Permission |
 |---|---|---|
-| Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` | Public / session |
-| Auth | `POST /auth/forgot-password`, `POST /auth/reset-password` | Public (rate limited) |
+| Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET /auth/session` | Public / session |
+| Auth | `POST /auth/forgot-password`, `POST /auth/reset-password` | Public |
+| Demo | `GET /auth/demo-accounts`, `POST /auth/demo-reset` | Public |
 | Dashboard | `GET /dashboard`, `GET /dashboard/announcements` | Session (view depends on role) |
-| Employees | `GET /employees/`, `POST /employees/`, `GET /employees/meta` | `employees:read` / `employees:write` |
+| Employees | `GET /employees`, `POST /employees`, `GET /employees/meta` | `employees:read` / `employees:write` |
 | Employees | `GET /employees/:id`, `PATCH /employees/:id`, `POST /employees/:id/offboard` | Scoped / `employees:write` |
 | Employees | `PUT /employees/:id/bank-details`, `GET /employees/:id/sensitive` | `employees:sensitive` (audited) |
 | Employees | `POST /employees/:id/salary`, `GET /employees/:id/salary-history` | `payroll:manage` / `payroll:read` |
-| Employees | `GET /employees/export.csv`, `POST /employees/import` | `employees:export` / `employees:write` |
-| Attendance | `GET /attendance/today`, `POST /attendance/check-in`, `POST /attendance/check-out` | Own employee profile |
-| Attendance | `GET /attendance/calendar`, `GET /attendance/summary`, `GET /attendance/` | Scoped |
+| Employees | `GET /employees/export.csv`, `POST /employees/import`, `PUT/DELETE /employees/:id/photo` | `employees:export` / `employees:write` / HR or self |
+| Attendance | `GET /attendance/today`, `POST /attendance/punch`, `GET /attendance/calendar`, `GET /attendance/summary`, `GET /attendance` | Own profile / scoped |
 | Attendance | `POST /attendance/corrections`, `GET /attendance/corrections`, `POST /attendance/corrections/:id/review` | Own / manager scope / HR |
-| Leave | `GET /leave/types`, `POST /leave/types`, `PATCH /leave/types/:id` | Read: session / write: `leave:manage` |
-| Leave | `GET /leave/balances`, `GET /leave/requests`, `POST /leave/requests` | Scoped / own |
-| Leave | `POST /leave/requests/:id/decision`, `POST /leave/requests/:id/cancel`, `POST /leave/requests/:id/cancellation-decision` | Manager scope / own / manager scope |
-| Leave | `GET /leave/calendar` | Scoped |
-| Payroll | `GET/POST /payroll/runs`, `GET /payroll/runs/:id` | `payroll:read` / `payroll:manage` |
-| Payroll | `POST /payroll/runs/:id/recalculate`, `/validate`, `/reopen` | `payroll:manage` |
-| Payroll | `POST /payroll/runs/:id/approve`, `/finalize` | `payroll:approve` (separation of duties) |
-| Payroll | `GET /payroll/runs/:id/bank-export.csv` | `payroll:bank-export` (audited) |
-| Payroll | `POST /payroll/entries/:entryId/payment` | `payroll:manage` (finalized runs only) |
-| Payroll | `GET/POST /payroll/adjustments`, `GET /payroll/reports/summary` | `payroll:read` / `payroll:manage` |
-| Payroll | `GET /payroll/payslips/mine`, `GET /payroll/payslips/:entryId` | Own (HR scoped) |
-| Org | `GET/PATCH /org/profile` | Read: session / write: `org:manage` (identity: Super Admin) |
-| Org | `GET/POST/DELETE /org/departments`, `/org/designations` | `org:manage` (delete blocked while in use) |
-| Org | `GET/POST/DELETE /org/holidays`, `GET/POST/DELETE /org/announcements` | `org:manage` (read: session, targeted) |
-| Org | `GET /org/audit-logs` | `audit:read` |
-| Reports | `GET /reports/overview?from&to&departmentId`, `GET /reports/export.csv?type=headcount|attendance|leave|payroll` | `reports:read` |
-| Notifications | `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all` | Own notifications only |
-| Photos | `PUT/DELETE /employees/:id/photo`, `GET /files/photos/:name` | HR or self / same organization |
-| Demo | `GET /auth/demo-accounts` | Only when `DEMO_MODE=true` outside production |
+| Attendance | `GET /attendance/overtime`, `POST /attendance/overtime/review` | Own / manager scope / HR |
+| Leave | `GET/POST /leave/types`, `PATCH /leave/types/:id`, `GET /leave/balances`, `GET/POST /leave/requests` | Session / `leave:manage` / scoped |
+| Leave | `POST /leave/requests/:id/decision`, `/cancel`, `/cancellation-decision`, `GET /leave/calendar` | Manager scope / own / scoped |
+| Payroll | `GET/POST /payroll/runs`, `GET /payroll/runs/:id`, `POST /payroll/runs/:id/recalculate`, `/validate`, `/reopen` | `payroll:read` / `payroll:manage` |
+| Payroll | `POST /payroll/runs/:id/approve`, `/finalize`, `GET /payroll/runs/:id/bank-export.csv` | `payroll:approve` / `payroll:bank-export` |
+| Payroll | `POST /payroll/entries/:entryId/payment`, `GET/POST /payroll/adjustments`, `GET /payroll/reports/summary` | `payroll:manage` / `payroll:read` |
+| Payroll | `GET /payroll/payslips/mine`, `GET /payroll/payslips/:entryId`, `GET /payroll/payslips/:entryId/pdf` | Own (HR scoped) |
+| Org | `GET/PATCH /org/profile`, departments, designations, holidays, announcements, `GET /org/audit-logs` | Session / `org:manage` / `audit:read` |
+| Reports | `GET /reports/overview`, `GET /reports/export.csv?type=headcount\|attendance\|leave\|payroll` | `reports:read` |
+| Notifications | `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all` | Own only |
 
-Health check: `GET /api/health`.
-
-## 9. Testing
+## 10. Testing
 
 ```bash
-cd server
 npm test
 ```
 
-- Unit tests: attendance rules (grace periods, late minutes, break deduction, overtime, half days), leave rules (working-day counting, accrual, balances, overlaps), and payroll calculation (proration, PF/ESI ceilings, overtime, adjustments, negative net pay, rounding).
-- Integration tests: authentication, role scoping, restricted-data access, payslip ownership, separation of duties, validation errors, and content-type protection. These run against the seeded development database, so run `npm run seed` first.
+- **Rules:** attendance (grace periods, late minutes, breaks, overtime, half days), leave (working days, accrual, balances, overlaps), payroll (proration, PF/ESI ceilings, overtime, adjustments, negative net pay, rounding) and employee codes and reporting lines.
+- **API:** runs the real API against the seeded demo company in memory: authentication, role and record scope, restricted data, payslip ownership and PDF, separation of duties, validation errors, transactions, persistence and demo reset.
 
-Not yet covered by automated tests: frontend unit tests, end-to-end browser tests, and finalization concurrency tests.
+Not covered by automated tests yet: component tests and end-to-end browser tests.
 
-## 10. Known limitations
+## 11. Known limitations
 
-These are intentional gaps in this release. Each is a planned item, not something hidden.
-
-- **Overtime pay** is disabled by default (`overtimeMultiplierBps = 0`). The overtime approval workflow is not built, and the spec pays approved overtime only.
-- **Payslip PDF:** payslips are print-ready HTML. Use the browser's "Save as PDF". Server-side PDF generation is not implemented.
-- **Email:** `lib/mailer.ts` is a boundary. In development it logs messages to the console. Production refuses to send until a provider is configured.
-- **Payment:** the bank transfer file is generated, but payment status is recorded manually. There is no bank API integration.
-- **Statutory calculations** are configurable and documented, but not verified for current rules. See section 7.
-- **Not yet built:** employee document uploads (profile photos are supported), email delivery of notifications (they are in-app only), reversal of finalized payroll (corrections should be handled as adjustments in a new run), multiple shifts (one organization shift today), and break tracking (breaks are derived, not recorded).
-- **Reports** cover at most 186 days per request, to keep the calculation fast.
-- **Avatars:** people without an uploaded photo get a generated illustrated portrait. The demo uses no photos of real people.
-- **Check-in** records server time but does not verify location or identity.
-- **Multi-tenant:** every table is scoped by `organizationId`, but the UI and seed run one company.
-
-## 11. Environment variables
-
-See `server/.env.example`. Secrets are read from the environment only. Nothing secret is committed. `server/.env` is git-ignored.
+- **Single browser.** Data is stored per browser profile. Two people on two computers do not share data; that needs a server (section 4).
+- **Email** is not sent: reset and welcome links appear in the browser console.
+- **Payment** status is recorded by hand from the bank file. There is no bank integration.
+- **Statutory calculations** are configurable but not verified for current rules (section 8).
+- **Not built yet:** employee document uploads (profile photos are supported), reversal of finalized payroll (use an adjustment in a later run), multiple shifts, and location or identity checks on punch-in.
+- **Reports** cover at most 186 days per request.
