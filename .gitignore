@@ -21,3 +21,11 @@ Thumbs.db
 
 # Old server folder from before the app became frontend-only (safe to delete)
 server/
+
+# local tooling (kept on disk, not in git)
+.claude/
+.vscode/
+.github/
+AGENTS.md
+CLAUDE.md
+*.tsbuildinfo
