@@ -1,5 +1,7 @@
 # PeopleHub: HR, Attendance, Leave and Payroll
 
+**Live demo:** https://hr-payroll-brown.vercel.app
+
 PeopleHub is an HR and payroll app for small and medium Indian companies. It is a single **Angular 20** project: no server, no database to install. Its API runs inside the browser and keeps the data in IndexedDB, so `npm start` is all it takes.
 
 > Demo data only. The seeded company, employees and figures are fictional. Bank and PAN values are synthetic. Payroll rates and tax values must be verified with a qualified professional before real use.
